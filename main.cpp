@@ -22,10 +22,12 @@ enum Flags
     cleanToneC = 16,
     cleanEnvelope = 32,
     cleanEnvForm = 64,
-    cleanNoise = 128
+    cleanNoise = 128,
+    
+    dumpPsg = 256
 };
 
-static const int kAllFlags = cleanNoise - 1;
+static const int kDefaultFlags = cleanNoise - 1;
 
 class PgsPacker
 {
@@ -75,11 +77,12 @@ public:
 
     Stats stats;
 
-    std::vector<uint8_t> data;
+    std::vector<uint8_t> srcPsgData;
+    std::vector<uint8_t> updatedPsgData;
     std::vector<uint8_t> compressedData;
     std::vector<int> refCount;
     std::vector<int> frameOffsets;
-    int flags = kAllFlags;
+    int flags = kDefaultFlags;
 
 private:
 
@@ -109,12 +112,12 @@ private:
         lastRegs[1] &= 15;
         lastRegs[3] &= 15;
         lastRegs[5] &= 15;
-        lastRegs[13] &= 15;
-        
         lastRegs[6] &= 31;
+        lastRegs[7] &= 63;
         lastRegs[8] &= 31;
         lastRegs[9] &= 31;
         lastRegs[10] &= 31;
+        lastRegs[13] &= 15;
 
         lastRegs[7] &= 63;
 
@@ -286,11 +289,18 @@ private:
         if (changedRegs.count(13))
             delta[13] = changedRegs[13];
         
-        if (delta != changedRegs)
-        {
-            int gg = 4;
-        }
         changedRegs = delta;
+
+        if (flags & dumpPsg)
+        {
+            updatedPsgData.push_back(0xff);
+            for (const auto& reg : changedRegs)
+            {
+                updatedPsgData.push_back(reg.first);
+                updatedPsgData.push_back(reg.second);
+            }
+        }
+
         if (flags & fastDepack)
             extendToFullChangeIfNeed();
 
@@ -302,6 +312,12 @@ private:
 
     void writeDelay(int delay)
     {
+        if (flags & dumpPsg)
+        {
+            for (int i = 0; i < delay; ++i)
+                updatedPsgData.push_back(0xff);
+        }
+
         while (delay > 0)
         {
             int d = std::min(kMaxDelay, delay);
@@ -524,11 +540,11 @@ public:
         int fileSize = fileIn.tellg();
         fileIn.seekg(0, ios::beg);
 
-        data.resize(fileSize);
-        fileIn.read((char*) data.data(), fileSize);
+        srcPsgData.resize(fileSize);
+        fileIn.read((char*)srcPsgData.data(), fileSize);
 
-        const uint8_t* pos = data.data() + 16;
-        const uint8_t* end = data.data() + data.size();
+        const uint8_t* pos = srcPsgData.data() + 16;
+        const uint8_t* end = srcPsgData.data() + srcPsgData.size();
 
         for (int i = 0; i <= kMaxDelay; ++i)
         {
@@ -649,6 +665,24 @@ public:
         return 0;
     }
 
+    int writeRawPsg(const std::string& outputFileName)
+    {
+        using namespace std;
+
+        ofstream fileOut;
+        fileOut.open(outputFileName, std::ios::binary | std::ios::trunc);
+        if (!fileOut.is_open())
+        {
+            std::cerr << "Can't open output file " << outputFileName << std::endl;
+            return -1;
+        }
+
+        fileOut.write((const char*) srcPsgData.data(), 16);
+        fileOut.write((const char*) updatedPsgData.data(), updatedPsgData.size());
+
+        return 0;
+    }
+
 };
 
 bool hasShortOpt(const std::string& s, char option)
@@ -677,6 +711,7 @@ int main(int argc, char** argv)
         std::cout << "-c, --clean\t Clean AY registers before packing. Improve compression level but incompatible with some tracks." << std::endl;
         std::cout << "-k, --keep\t --Don't clean AY regiaters." << std::endl;
         std::cout << "-i, --info\t Print timings info for each compresed frame." << std::endl;
+        std::cout << "-d, --dump\t Dump uncompressed PSG frame to the separate file." << std::endl;
         return -1;
     }
 
@@ -699,6 +734,10 @@ int main(int argc, char** argv)
         {
             packer.flags &= ~cleanRegs;
         }
+        else if (hasShortOpt(s, 'd') || s == "--dump")
+        {
+            packer.flags |= dumpPsg;
+        }
         else if (hasShortOpt(s, 'i') || s == "--info")
         {
             std::cerr << "Option is not implemented yet. Coming soon..." << std::endl;
@@ -720,10 +759,13 @@ int main(int argc, char** argv)
         result = packer.packPsg(argv[argc - 1]);
     if (result != 0)
         return result;
+    if (packer.flags & dumpPsg)
+        packer.writeRawPsg(std::string(argv[argc - 1]) + ".psg");
+
     auto timeEnd = steady_clock::now();
 
     std::cout << "Compression done in " << duration_cast<milliseconds>(timeEnd - timeBegin).count() / 1000.0 << " second(s)" << std::endl;
-    std::cout << "Input size:\t" << packer.data.size() << std::endl;
+    std::cout << "Input size:\t" << packer.srcPsgData.size() << std::endl;
     std::cout << "Packed size:\t" << packer.compressedData.size() << std::endl;
     std::cout << "1-byte refs:\t" << packer.stats.singleRepeat << std::endl;
     std::cout << "Total refs:\t" << packer.stats.allRepeat << std::endl;
