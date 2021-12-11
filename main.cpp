@@ -25,6 +25,8 @@ enum Flags
     cleanNoise = 128
 };
 
+static const int kAllFlags = cleanNoise - 1;
+
 class PgsPacker
 {
 public:
@@ -77,8 +79,7 @@ public:
     std::vector<uint8_t> compressedData;
     std::vector<int> refCount;
     std::vector<int> frameOffsets;
-    int flags = fastDepack;
-    bool firstFrame = true;
+    int flags = kAllFlags;
 
 private:
 
@@ -103,15 +104,6 @@ private:
     // This code ported from PHP to cpp from tmk&bfox ayPacker.
     void doCleanRegs()
     {
-        if (prevTonePeriod.empty())
-        {
-            // Initial value
-            prevTonePeriod = lastRegs;
-            prevEnvelopePeriod = lastRegs;
-            prevEnvelopeForm = lastRegs;
-            prevNoisePeriod = lastRegs;
-        }
-
         // Normalize regs values (only usage bits).
 
         lastRegs[1] &= 15;
@@ -136,52 +128,49 @@ private:
 
         // Clean tone period.
 
-        for (auto& reg: changedRegs)
+        /* toneA */
+        if (flags & cleanToneA) 
         {
-            /* toneA */
-            if (flags & cleanToneA) 
+            if (lastRegs[8] == 0 || (lastRegs[7] & 1) != 0)
             {
-                if (lastRegs[8] == 0 || (lastRegs[7] & 1) != 0)
-                {
-                    lastRegs[0] = prevTonePeriod[0];
-                    lastRegs[1] = prevTonePeriod[1];
-                    stats.unusedToneA++;
-                }
-                else 
-                {
-                    prevTonePeriod[0] = lastRegs[0];
-                    prevTonePeriod[1] = lastRegs[1];
-                }
+                lastRegs[0] = prevTonePeriod[0];
+                lastRegs[1] = prevTonePeriod[1];
+                stats.unusedToneA++;
             }
-            /* toneB */
-            if (flags & cleanToneB)
+            else 
             {
-                if (lastRegs[9] == 0 || (lastRegs[7] & 2) != 0)
-                {
-                    lastRegs[2] = prevTonePeriod[2];
-                    lastRegs[3] = prevTonePeriod[3];
-                    stats.unusedToneB++;
-                }
-                else 
-                {
-                    prevTonePeriod[2] = lastRegs[2];
-                    prevTonePeriod[3] = lastRegs[3];
-                }
+                prevTonePeriod[0] = lastRegs[0];
+                prevTonePeriod[1] = lastRegs[1];
             }
-            /* toneC */
-            if (flags & cleanToneC)
+        }
+        /* toneB */
+        if (flags & cleanToneB)
+        {
+            if (lastRegs[9] == 0 || (lastRegs[7] & 2) != 0)
             {
-                if (lastRegs[10] == 0 || (lastRegs[7] & 4) != 0)
-                {
-                    lastRegs[4] = prevTonePeriod[4];
-                    lastRegs[5] = prevTonePeriod[5];
-                    stats.unusedToneC++;
-                }
-                else 
-                {
-                    prevTonePeriod[4] = lastRegs[4];
-                    prevTonePeriod[5] = lastRegs[5];
-                }
+                lastRegs[2] = prevTonePeriod[2];
+                lastRegs[3] = prevTonePeriod[3];
+                stats.unusedToneB++;
+            }
+            else 
+            {
+                prevTonePeriod[2] = lastRegs[2];
+                prevTonePeriod[3] = lastRegs[3];
+            }
+        }
+        /* toneC */
+        if (flags & cleanToneC)
+        {
+            if (lastRegs[10] == 0 || (lastRegs[7] & 4) != 0)
+            {
+                lastRegs[4] = prevTonePeriod[4];
+                lastRegs[5] = prevTonePeriod[5];
+                stats.unusedToneC++;
+            }
+            else 
+            {
+                prevTonePeriod[4] = lastRegs[4];
+                prevTonePeriod[5] = lastRegs[5];
             }
         }
 
@@ -233,38 +222,56 @@ private:
         }
     }
 
-    void writeRegs()
+    void extendToFullChangeIfNeed()
     {
-        if (flags & fastDepack)
+        decltype(changedRegs) firstReg, secondReg;
+        for (const auto& reg : changedRegs)
         {
-            decltype(changedRegs) firstReg, secondReg;
-            for(const auto& reg: changedRegs)
+            if (reg.first < 6)
+                firstReg.insert(reg);
+            else if (reg.first != 13)
+                secondReg.insert(reg);
+        }
+
+        if (firstReg.size() == 5)
+        {
+            // Regs are about to full. Extend them to full regs.
+            for (const auto& reg : lastRegs)
             {
                 if (reg.first < 6)
-                    firstReg.insert(reg);
-                else if (reg.first != 13)
-                    secondReg.insert(reg);
+                    changedRegs[reg.first] = reg.second;
             }
-            
-            if (firstReg.size() == 5)
+        }
+
+        if (secondReg.size() == 6 || secondReg.size() == 5)
+        {
+            // Regs are about to full. Extend them to full regs (exclude reg13)
+            for (const auto& reg : lastRegs)
             {
-                // Regs are about to full. Extend them to full regs.
-                for (const auto& reg: lastRegs)
-                {
-                    if (reg.first < 6)
-                        changedRegs[reg.first] = reg.second;
-                }
+                if (reg.first >= 6 && reg.first != 13)
+                    changedRegs[reg.first] = reg.second;
+            }
+        }
+    }
+
+    void writeRegs()
+    {
+        if (changedRegs.empty())
+            return;
+
+        if (prevTonePeriod.empty())
+        {
+            for (int i = 0; i < 13; ++i)
+            {
+                changedRegs.emplace(i, 0);
+                lastRegs.emplace(i, 0);
             }
 
-            if (secondReg.size() == 6 || secondReg.size() == 5)
-            {
-                // Regs are about to full. Extend them to full regs (exclude reg13)
-                for (const auto& reg: lastRegs)
-                {
-                    if (reg.first >= 6 && reg.first != 13)
-                        changedRegs[reg.first] = reg.second;
-                }
-            }
+            // Initial value
+            prevTonePeriod = lastRegs;
+            prevEnvelopePeriod = lastRegs;
+            prevEnvelopeForm = lastRegs;
+            prevNoisePeriod = lastRegs;
         }
 
         if (flags & cleanRegs)
@@ -273,7 +280,7 @@ private:
         AYRegs delta;
         for (int i = 0; i < 14; ++i)
         {
-            if (lastRegs[i] != prevFrameRegs[i])
+            if (prevFrameRegs.empty() || lastRegs[i] != prevFrameRegs[i])
                 delta[i] = lastRegs[i];
         }
         if (changedRegs.count(13))
@@ -284,21 +291,13 @@ private:
             int gg = 4;
         }
         changedRegs = delta;
+        if (flags & fastDepack)
+            extendToFullChangeIfNeed();
 
-        if (!changedRegs.empty())
-        {
-            if (firstFrame)
-            {
-                firstFrame = false;
-                for (int i = 0; i < 13; ++i)
-                    changedRegs.emplace(i, 0);
-            }
-
-            uint16_t symbol = toSymbol(changedRegs);
-            ayFrames.push_back(symbol); //< Flush previous frame.
-            prevFrameRegs = lastRegs;
-            changedRegs.clear();
-        }
+        uint16_t symbol = toSymbol(changedRegs);
+        ayFrames.push_back(symbol); //< Flush previous frame.
+        prevFrameRegs = lastRegs;
+        changedRegs.clear();
     }
 
     void writeDelay(int delay)
@@ -669,12 +668,14 @@ int main(int argc, char** argv)
     if (argc < 3)
     {
         std::cout << "Usage: psg_pack [OPTION] input_file output_file" << std::endl;
-        std::cout << "Example: psg_pack -n file1.psg packetd.mus" << std::endl;
+        std::cout << "Example: psg_pack -fc file1.psg packetd.mus" << std::endl;
+        std::cout << "Default options: --fast --clean" << std::endl;
         std::cout << "" << std::endl;
         std::cout << "Options:" << std::endl;
-        std::cout << "-f, --fast\t Optimize archive for unpacking (max 799t). Option is turned on by default." << std::endl;
+        std::cout << "-f, --fast\t Optimize archive for unpacking (max 799t)." << std::endl;
         std::cout << "-n, --normal\t Better compression but more slow unpacking (~920t)." << std::endl;
         std::cout << "-c, --clean\t Clean AY registers before packing. Improve compression level but incompatible with some tracks." << std::endl;
+        std::cout << "-k, --keep\t --Don't clean AY regiaters." << std::endl;
         std::cout << "-i, --info\t Print timings info for each compresed frame." << std::endl;
         return -1;
     }
@@ -692,8 +693,11 @@ int main(int argc, char** argv)
         }
         else if (hasShortOpt(s, 'c') || s == "--clean")
         {
-            packer.flags &= cleanRegs;
-            return -1;
+            packer.flags |= cleanRegs;
+        }
+        else if (hasShortOpt(s, 'k') || s == "--keep")
+        {
+            packer.flags &= ~cleanRegs;
         }
         else if (hasShortOpt(s, 'i') || s == "--info")
         {
