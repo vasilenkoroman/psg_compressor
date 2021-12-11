@@ -67,8 +67,9 @@ public:
     std::vector<uint16_t> ayFrames;
 
     AYRegs changedRegs;
-    AYRegs lastRegs;  
-    AYRegs prevFrameRegs;
+    AYRegs lastOrigRegs; 
+    AYRegs lastCleanedRegs;
+    AYRegs prevCleanedRegs;
 
     AYRegs prevTonePeriod;
     AYRegs prevEnvelopePeriod;
@@ -109,24 +110,26 @@ private:
     {
         // Normalize regs values (only usage bits).
 
-        lastRegs[1] &= 15;
-        lastRegs[3] &= 15;
-        lastRegs[5] &= 15;
-        lastRegs[6] &= 31;
-        lastRegs[7] &= 63;
-        lastRegs[8] &= 31;
-        lastRegs[9] &= 31;
-        lastRegs[10] &= 31;
-        lastRegs[13] &= 15;
+        lastCleanedRegs = lastOrigRegs;
 
-        lastRegs[7] &= 63;
+        lastCleanedRegs[1] &= 15;
+        lastCleanedRegs[3] &= 15;
+        lastCleanedRegs[5] &= 15;
+        lastCleanedRegs[6] &= 31;
+        lastCleanedRegs[7] &= 63;
+        lastCleanedRegs[8] &= 31;
+        lastCleanedRegs[9] &= 31;
+        lastCleanedRegs[10] &= 31;
+        lastCleanedRegs[13] &= 15;
+
+        lastCleanedRegs[7] &= 63;
 
         // clean volume (do AND_16 if envelope mode)
 
         for (int i : {8, 9, 10})
         {
-            if (lastRegs[i] & 16)
-                lastRegs[i] = 16;
+            if (lastCleanedRegs[i] & 16)
+                lastCleanedRegs[i] = 16;
         }
 
         // Clean tone period.
@@ -134,46 +137,46 @@ private:
         /* toneA */
         if (flags & cleanToneA) 
         {
-            if (lastRegs[8] == 0 || (lastRegs[7] & 1) != 0)
+            if (lastOrigRegs[8] == 0 || (lastOrigRegs[7] & 1) != 0)
             {
-                lastRegs[0] = prevTonePeriod[0];
-                lastRegs[1] = prevTonePeriod[1];
+                lastCleanedRegs[0] = prevTonePeriod[0];
+                lastCleanedRegs[1] = prevTonePeriod[1];
                 stats.unusedToneA++;
             }
             else 
             {
-                prevTonePeriod[0] = lastRegs[0];
-                prevTonePeriod[1] = lastRegs[1];
+                prevTonePeriod[0] = lastOrigRegs[0];
+                prevTonePeriod[1] = lastOrigRegs[1];
             }
         }
         /* toneB */
         if (flags & cleanToneB)
         {
-            if (lastRegs[9] == 0 || (lastRegs[7] & 2) != 0)
+            if (lastOrigRegs[9] == 0 || (lastOrigRegs[7] & 2) != 0)
             {
-                lastRegs[2] = prevTonePeriod[2];
-                lastRegs[3] = prevTonePeriod[3];
+                lastCleanedRegs[2] = prevTonePeriod[2];
+                lastCleanedRegs[3] = prevTonePeriod[3];
                 stats.unusedToneB++;
             }
             else 
             {
-                prevTonePeriod[2] = lastRegs[2];
-                prevTonePeriod[3] = lastRegs[3];
+                prevTonePeriod[2] = lastOrigRegs[2];
+                prevTonePeriod[3] = lastOrigRegs[3];
             }
         }
         /* toneC */
         if (flags & cleanToneC)
         {
-            if (lastRegs[10] == 0 || (lastRegs[7] & 4) != 0)
+            if (lastOrigRegs[10] == 0 || (lastOrigRegs[7] & 4) != 0)
             {
-                lastRegs[4] = prevTonePeriod[4];
-                lastRegs[5] = prevTonePeriod[5];
+                lastCleanedRegs[4] = prevTonePeriod[4];
+                lastCleanedRegs[5] = prevTonePeriod[5];
                 stats.unusedToneC++;
             }
             else 
             {
-                prevTonePeriod[4] = lastRegs[4];
-                prevTonePeriod[5] = lastRegs[5];
+                prevTonePeriod[4] = lastOrigRegs[4];
+                prevTonePeriod[5] = lastOrigRegs[5];
             }
         }
 
@@ -181,16 +184,16 @@ private:
 
         if (flags & cleanEnvelope)
         {
-            if ((lastRegs[8] & 16) == 0 && (lastRegs[9] & 16) == 0 && (lastRegs[10] & 16) == 0)
+            if ((lastOrigRegs[8] & 16) == 0 && (lastOrigRegs[9] & 16) == 0 && (lastOrigRegs[10] & 16) == 0)
             {
-                lastRegs[11] = prevEnvelopePeriod[11];
-                lastRegs[12] = prevEnvelopePeriod[12];
+                lastCleanedRegs[11] = prevEnvelopePeriod[11];
+                lastCleanedRegs[12] = prevEnvelopePeriod[12];
                 stats.unusedEnvelope++;
             }
             else 
             {
-                prevEnvelopePeriod[11] = lastRegs[11];
-                prevEnvelopePeriod[12] = lastRegs[12];
+                prevEnvelopePeriod[11] = lastOrigRegs[11];
+                prevEnvelopePeriod[12] = lastOrigRegs[12];
             }
         }
 
@@ -198,14 +201,14 @@ private:
 
         if (flags & cleanEnvForm) 
         {
-            if ((lastRegs[8] & 16) == 0 && (lastRegs[9] & 16) == 0 && (lastRegs[10] & 16) == 0)
+            if ((lastOrigRegs[8] & 16) == 0 && (lastOrigRegs[9] & 16) == 0 && (lastOrigRegs[10] & 16) == 0)
             {
-                lastRegs[13] = prevEnvelopeForm[13];
+                lastCleanedRegs[13] = prevEnvelopeForm[13];
                 stats.unusedEnvForm++;
             }
             else 
             {
-                prevEnvelopeForm[13] = lastRegs[13];
+                prevEnvelopeForm[13] = lastOrigRegs[13];
             }
         }
 
@@ -213,14 +216,14 @@ private:
 
         if (flags & cleanNoise) 
         {
-            if ((lastRegs[7] & 8) != 0 && (lastRegs[7] & 16) != 0 && (lastRegs[7] & 32) != 0)
+            if ((lastOrigRegs[7] & 8) != 0 && (lastOrigRegs[7] & 16) != 0 && (lastOrigRegs[7] & 32) != 0)
             {
-                lastRegs[6] = prevNoisePeriod[6];
+                lastCleanedRegs[6] = prevNoisePeriod[6];
                 stats.unusedNoise++;
             }
             else 
             {
-                prevNoisePeriod[6] = lastRegs[6];
+                prevNoisePeriod[6] = lastCleanedRegs[6];
             }
         }
     }
@@ -239,7 +242,7 @@ private:
         if (firstReg.size() == 5)
         {
             // Regs are about to full. Extend them to full regs.
-            for (const auto& reg : lastRegs)
+            for (const auto& reg: lastCleanedRegs)
             {
                 if (reg.first < 6)
                     changedRegs[reg.first] = reg.second;
@@ -249,7 +252,7 @@ private:
         if (secondReg.size() == 6 || secondReg.size() == 5)
         {
             // Regs are about to full. Extend them to full regs (exclude reg13)
-            for (const auto& reg : lastRegs)
+            for (const auto& reg: lastCleanedRegs)
             {
                 if (reg.first >= 6 && reg.first != 13)
                     changedRegs[reg.first] = reg.second;
@@ -257,44 +260,54 @@ private:
         }
     }
 
-    void writeRegs()
+    bool writeRegs()
     {
         if (changedRegs.empty())
-            return;
+            return false;
 
         if (prevTonePeriod.empty())
         {
             for (int i = 0; i < 13; ++i)
             {
                 changedRegs.emplace(i, 0);
-                lastRegs.emplace(i, 0);
+                lastOrigRegs.emplace(i, 0);
             }
 
             // Initial value
-            prevTonePeriod = lastRegs;
-            prevEnvelopePeriod = lastRegs;
-            prevEnvelopeForm = lastRegs;
-            prevNoisePeriod = lastRegs;
+            prevTonePeriod = lastOrigRegs;
+            prevEnvelopePeriod = lastOrigRegs;
+            prevEnvelopeForm = lastOrigRegs;
+            prevNoisePeriod = lastOrigRegs;
         }
 
+        int unusedEnvForm = stats.unusedEnvForm;
+        lastCleanedRegs = lastOrigRegs;
         if (flags & cleanRegs)
             doCleanRegs();
+
 
         AYRegs delta;
         for (int i = 0; i < 14; ++i)
         {
-            if (prevFrameRegs.empty() || lastRegs[i] != prevFrameRegs[i])
-                delta[i] = lastRegs[i];
+            if (prevCleanedRegs.empty() || lastCleanedRegs[i] != prevCleanedRegs[i])
+                delta[i] = lastCleanedRegs[i];
         }
-        if (changedRegs.count(13))
-            delta[13] = changedRegs[13];
-        
+        prevCleanedRegs = lastCleanedRegs;
+
+        if (changedRegs.count(13) && !(flags & cleanRegs))
+            delta[13] = changedRegs[13]; //< Can be retrig.
+
         changedRegs = delta;
+        if (changedRegs.empty())
+            return false;
 
         if (flags & dumpPsg)
         {
+            if (updatedPsgData.empty())
+                updatedPsgData.insert(updatedPsgData.end(), srcPsgData.begin(), srcPsgData.begin() + 16);
+
             updatedPsgData.push_back(0xff);
-            for (const auto& reg : changedRegs)
+            for (const auto& reg: changedRegs)
             {
                 updatedPsgData.push_back(reg.first);
                 updatedPsgData.push_back(reg.second);
@@ -306,8 +319,9 @@ private:
 
         uint16_t symbol = toSymbol(changedRegs);
         ayFrames.push_back(symbol); //< Flush previous frame.
-        prevFrameRegs = lastRegs;
+
         changedRegs.clear();
+        return true;
     }
 
     void writeDelay(int delay)
@@ -562,7 +576,11 @@ public:
             if (value >= 0xfe)
             {
                 ++stats.psgFrames;
-                writeRegs();
+                if (!changedRegs.empty())
+                {
+                    if (!writeRegs())
+                        ++delayCounter; //< Regs were cleaned up.
+                }
 
                 if (value == 0xff)
                 {
@@ -586,12 +604,17 @@ public:
 
                 assert(value <= 13);
                 changedRegs[value] = pos[1];
-                lastRegs[value] = pos[1];
+                lastOrigRegs[value] = pos[1];
                 ++stats.regsChange[value];
                 pos += 2;
             }
         }
-        writeRegs();
+
+        if (!changedRegs.empty())
+        {
+            if (!writeRegs())
+                ++delayCounter; //< Regs were cleaned up.
+        }
         writeDelay(delayCounter - 1);
 
         return 0;
@@ -677,7 +700,6 @@ public:
             return -1;
         }
 
-        fileOut.write((const char*) srcPsgData.data(), 16);
         fileOut.write((const char*) updatedPsgData.data(), updatedPsgData.size());
 
         return 0;
