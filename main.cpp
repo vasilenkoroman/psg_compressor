@@ -553,7 +553,7 @@ private:
                 int serializedSize = 0;
                 std::vector<int> sizes;
                 
-                for (int j = 0; j < maxLength && i + j < pos; ++j)
+                for (int j = 0; j < maxLength && i + j < pos && reducedLen < 127; ++j)
                 {
                     if (ayFrames[i + j] != ayFrames[pos + j] || refCount[i + j] > 1)
                         break;
@@ -580,16 +580,16 @@ private:
             }
         }
 
-#if 0
+#if 1
         if (flags & fastDepack)
         {
-            if (maxChainLen == 1)
+            if (maxChainLen > 1)
             {
                 const auto regs = symbolToRegs[ayFrames[chainPos]];
                 auto [firstRegs, secondRegs] = splitRegs(regs);
 
                 if (firstRegs >= 4 && secondRegs >= 5)
-                    forceLongRef = bool; //< Long refs is faster for 19t
+                    return std::tuple<int, int, int> { -1, -1, -1}; //< Long refs is slower
             }
         }
 #endif
