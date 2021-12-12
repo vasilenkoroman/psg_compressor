@@ -25,7 +25,8 @@ enum Flags
     cleanEnvForm = 64,
     cleanNoise = 128,
     
-    dumpPsg = 256
+    dumpPsg = 256,
+    dumpTimings = 512
 };
 
 static const int kDefaultFlags = cleanNoise - 1;
@@ -87,6 +88,7 @@ public:
     std::vector<int> frameOffsets;
     int flags = kDefaultFlags;
     bool firstFrame = false;
+    std::vector<int> timingsData;
 
 private:
 
@@ -396,12 +398,68 @@ private:
         return result;
     }
 
+    int pl00TimeForFrame(const RegMap& regs)
+    {
+        int result = 140;
+        if (regs.size() == 1)
+            result += -(16 + 4 + 16 + 7) + 5;
+        return result;
+    }
+
+    auto splitRegs(const RegMap& regs)
+    {
+        int firstRegs = 0;
+        int secondRegs = 0;
+        for (const auto& reg : regs)
+        {
+            if (reg.first < 6)
+                ++firstRegs;
+            else
+                ++secondRegs;
+        }
+        return std::tuple<int, int>(firstRegs, secondRegs);
+    }
+
+    int pl0xTimings(const RegMap& regs)
+    {
+        const auto [firstRegs, secondRegs] = splitRegs(regs);
+        bool psg2 = isPsg2(regs);
+        if (!psg2)
+            return 21 + 5 + pl00TimeForFrame(regs);
+
+        // PSG2 timings
+        int result = 44; //< Till jump to play_all_0_5
+        if (firstRegs < 6)
+        {
+            // play_by_mask_0_5
+            if (regs.count(0) == 0)
+                result += 4 + 12; //< There is no reg 0.
+            else
+                result += 47;
+        }
+
+        return result;
+    }
+
+    int getFrameDuration(const RegMap& regs)
+    {
+        int result = 32; //< before pl_frame
+        result += pl0xTimings(regs);
+        result += 33; //< before trb_rep
+        result += 7+7+10; //< There is no trb_rep counter;
+
+        return result;
+    }
+
     void serializeFrame(uint16_t pos)
     {
         int prevSize = compressedData.size();
 
         uint16_t symbol = ayFrames[pos];
         auto regs = symbolToRegs[symbol];
+
+        if (flags & dumpTimings)
+           timingsData.push_back(getFrameDuration(regs));
 
         bool usePsg2 = isPsg2(regs);
 
@@ -522,17 +580,21 @@ private:
             }
         }
 
+#if 0
         if (flags & fastDepack)
         {
             if (maxChainLen == 1)
             {
                 const auto regs = symbolToRegs[ayFrames[chainPos]];
-                if (regs.size() == 14)
-                    return std::tuple<int, int, int> { -1, -1, -1 };
+                auto [firstRegs, secondRegs] = splitRegs(regs);
+
+                if (firstRegs >= 4 && secondRegs >= 5)
+                    forceLongRef = bool; //< Long refs is faster for 19t
             }
         }
+#endif
 
-        return std::tuple<int, int, int> { chainPos, maxChainLen, maxReducedLen };
+        return std::tuple<int, int, int> { chainPos, maxChainLen, maxReducedLen};
     }
 
 public:
@@ -761,7 +823,7 @@ int main(int argc, char** argv)
         }
         else if (hasShortOpt(s, 'i') || s == "--info")
         {
-            std::cerr << "Option is not implemented yet. Coming soon..." << std::endl;
+            packer.flags |= dumpTimings;
             return -1;
         }
         else
