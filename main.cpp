@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <array>
 
 static const uint8_t kEndTrackMarker = 0x3f;
 static const int kMaxDelay = 33;
@@ -60,21 +61,22 @@ public:
         int unusedNoise = 0;
     };
 
-    using AYRegs = std::map<int, int>;
+    using RegMap = std::map<int, int>;
+    using RegVector = std::array<int, 14>;
 
-    std::map<AYRegs, uint16_t> regsToSymbol;
-    std::map<uint16_t, AYRegs> symbolToRegs;
+    std::map<RegMap, uint16_t> regsToSymbol;
+    std::map<uint16_t, RegMap> symbolToRegs;
     std::vector<uint16_t> ayFrames;
 
-    AYRegs changedRegs;
-    AYRegs lastOrigRegs; 
-    AYRegs lastCleanedRegs;
-    AYRegs prevCleanedRegs;
+    RegMap changedRegs;
 
-    AYRegs prevTonePeriod;
-    AYRegs prevEnvelopePeriod;
-    AYRegs prevEnvelopeForm;
-    AYRegs prevNoisePeriod;
+    RegVector lastOrigRegs;
+    RegVector lastCleanedRegs;
+    RegVector prevCleanedRegs;
+    RegVector prevTonePeriod;
+    RegVector prevEnvelopePeriod;
+    RegVector prevEnvelopeForm;
+    RegVector prevNoisePeriod;
 
     Stats stats;
 
@@ -84,16 +86,17 @@ public:
     std::vector<int> refCount;
     std::vector<int> frameOffsets;
     int flags = kDefaultFlags;
+    bool firstFrame = false;
 
 private:
 
-    bool isPsg2(const AYRegs& regs) const
+    bool isPsg2(const RegMap& regs) const
     {
         bool usePsg2 = regs.size() > 2;
         return usePsg2;
     }
 
-    uint16_t toSymbol(const AYRegs& regs)
+    uint16_t toSymbol(const RegMap& regs)
     {
         auto itr = regsToSymbol.find(regs);
         if (itr != regsToSymbol.end())
@@ -242,21 +245,15 @@ private:
         if (firstReg.size() == 5)
         {
             // Regs are about to full. Extend them to full regs.
-            for (const auto& reg: lastCleanedRegs)
-            {
-                if (reg.first < 6)
-                    changedRegs[reg.first] = reg.second;
-            }
+            for (int i = 0; i < 6; ++i)
+                changedRegs[i] = lastCleanedRegs[i];
         }
 
         if (secondReg.size() == 6 || secondReg.size() == 5)
         {
             // Regs are about to full. Extend them to full regs (exclude reg13)
-            for (const auto& reg: lastCleanedRegs)
-            {
-                if (reg.first >= 6 && reg.first != 13)
-                    changedRegs[reg.first] = reg.second;
-            }
+            for (int i = 6; i < 13; ++i)
+                changedRegs[i] = lastCleanedRegs[i];
         }
     }
 
@@ -270,7 +267,7 @@ private:
             for (int i = 0; i < 13; ++i)
             {
                 changedRegs.emplace(i, 0);
-                lastOrigRegs.emplace(i, 0);
+                lastOrigRegs[i] = 0;
             }
 
             // Initial value
@@ -286,12 +283,13 @@ private:
             doCleanRegs();
 
 
-        AYRegs delta;
+        RegMap delta;
         for (int i = 0; i < 14; ++i)
         {
-            if (prevCleanedRegs.empty() || lastCleanedRegs[i] != prevCleanedRegs[i])
+            if (firstFrame || lastCleanedRegs[i] != prevCleanedRegs[i])
                 delta[i] = lastCleanedRegs[i];
         }
+        firstFrame = false;
         prevCleanedRegs = lastCleanedRegs;
 
         if (changedRegs.count(13) && !(flags & cleanRegs))
@@ -382,7 +380,7 @@ private:
             compressedData.push_back(size - 1);
     };
     
-    uint8_t makeRegMask(const AYRegs& regs, int from, int to)
+    uint8_t makeRegMask(const RegMap& regs, int from, int to)
     {
         uint8_t result = 0;
         uint8_t bit = 0x80;
@@ -556,13 +554,14 @@ public:
 
         srcPsgData.resize(fileSize);
         fileIn.read((char*)srcPsgData.data(), fileSize);
+        firstFrame = true;
 
         const uint8_t* pos = srcPsgData.data() + 16;
         const uint8_t* end = srcPsgData.data() + srcPsgData.size();
 
         for (int i = 0; i <= kMaxDelay; ++i)
         {
-            AYRegs fakeRegs;
+            RegMap fakeRegs;
             fakeRegs[-1] = i;
             regsToSymbol.emplace(fakeRegs, i);
             symbolToRegs.emplace(i, fakeRegs);
@@ -615,7 +614,7 @@ public:
             if (!writeRegs())
                 ++delayCounter; //< Regs were cleaned up.
         }
-        writeDelay(delayCounter - 1);
+        writeDelay(delayCounter);
 
         return 0;
     }
