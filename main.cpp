@@ -1065,7 +1065,7 @@ int main(int argc, char** argv)
 {
     PgsPacker packer;
 
-    std::cout << "Fast PSG packer v.0.5a" << std::endl;
+    std::cout << "Fast PSG packer v.0.6a" << std::endl;
     if (argc < 3)
     {
         std::cout << "Usage: psg_pack [OPTION] input_file output_file" << std::endl;
