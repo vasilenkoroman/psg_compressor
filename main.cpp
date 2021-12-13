@@ -39,6 +39,203 @@ enum class TimingState
 
 static const int kDefaultFlags = cleanNoise - 1;
 
+using RegMap = std::map<int, int>;
+using RegVector = std::array<int, 14>;
+
+auto splitRegs(const RegMap& regs)
+{
+    int firstRegs = 0;
+    int secondRegs = 0;
+    for (const auto& reg : regs)
+    {
+        if (reg.first < 6)
+            ++firstRegs;
+        else
+            ++secondRegs;
+    }
+    return std::tuple<int, int>(firstRegs, secondRegs);
+}
+
+bool isPsg2(const RegMap& regs)
+{
+    return regs.size() > 2;
+}
+
+class TimingsHelper
+{
+public:
+    static int trbRepTimings(int trdRep)
+    {
+        if (trdRep == 0)
+            return 7 + 4 + 11;
+        int result = 7 + 4 + 5;
+        if (trdRep > 1)
+        {
+            result += 13 + 11;
+            return result;
+        }
+
+        result += 13 + 5 + 42;
+        return result;
+    }
+
+    static int delayTimings(TimingState state, int trbRep)
+    {
+        int result = 0;    //< Timing on enter to pause
+        switch (state)
+        {
+        case TimingState::single:
+            result = 94 + 6 + 16 + 11;
+            return result;
+        case TimingState::first:
+            result = 94 + 41 + 84;
+            return result;
+        case TimingState::mid:
+            result = 12 + 10 + 11 + 11;
+            return result;
+        case TimingState::last:
+            result = 12 + 26 + 38;
+            result += trbRepTimings(trbRep);
+
+        }
+    }
+
+    static int play_all_6_13(const RegMap& regs)
+    {
+        int result = 341;
+        if (regs.count(13) == 0)
+            result -= 40;
+        return result;
+    }
+
+    static int play_by_mask_13_6(const RegMap& regs)
+    {
+        int result = 53;
+        if (regs.count(13) == 0)
+            result -= 34;
+        for (int i = 12; i > 6; --i)
+        {
+            result += 54;
+            if (regs.count(i) == 0)
+                result -= 34;
+        }
+
+        if (regs.count(6) == 0)
+            result += 4 + 11;
+        else
+            result += 55;
+
+        return result;
+    }
+
+    static int play_all_0_5_end(const RegMap& regs)
+    {
+        const auto [firstRegs, secondRegs] = splitRegs(regs);
+        int secondRegsExcept13 = secondRegs;
+        if (regs.count(13) == 1)
+            --secondRegsExcept13;
+
+        int result = 24;
+
+        if (secondRegsExcept13 == 7)
+            result += play_all_6_13(regs);
+        else
+            result += 5 + play_by_mask_13_6(regs);
+
+        return result;
+    }
+
+    static int pl00TimeForFrame(const RegMap& regs)
+    {
+        int result = 140;
+        if (regs.size() == 1)
+            result += -(16 + 4 + 16 + 7) + 5;
+        return result;
+    }
+
+    static int pl0xTimings(const RegMap& regs)
+    {
+        const auto [firstRegs, secondRegs] = splitRegs(regs);
+        int secondRegsExcept13 = secondRegs;
+        if (regs.count(13) == 1)
+            --secondRegsExcept13;
+        bool psg2 = isPsg2(regs);
+        if (!psg2)
+            return 21 + 5 + pl00TimeForFrame(regs);
+
+        // PSG2 timings
+        int result = 44; //< Till jump to play_all_0_5
+
+        if (firstRegs < 6)
+        {
+            // play_by_mask_0_5
+            for (int i = 0; i < 5; ++i)
+            {
+                if (regs.count(i) == 0)
+                    result += 20; //< There is no reg i.
+                else
+                    result += 54;
+            }
+
+            if (regs.count(5) == 0)
+            {
+                result += 4 + 12; // 'play_all_0_5_end' reached
+                result += play_all_0_5_end(regs);
+            }
+            else
+            {
+                result += 43 + 24;
+                if (secondRegsExcept13 == 7)
+                    result += 5 + play_all_6_13(regs);
+                else
+                    result += 7 + 10 + play_by_mask_13_6(regs);
+            }
+        }
+        else
+        {
+            result += 5;
+            result += 240;
+            result += play_all_0_5_end(regs);
+        }
+
+        return result;
+    }
+
+    static int shortRefTimings(const RegMap& regs)
+    {
+        int result = 118;
+        result += TimingsHelper::pl0xTimings(regs);
+        return result;
+    }
+
+    static int longRefInitTiming(const RegMap& regs)
+    {
+        int result = 168;
+        result += TimingsHelper::pl0xTimings(regs);
+        return result;
+    }
+
+    static int frameTimings(const RegMap& regs, int trbRep)
+    {
+        int result = 32; //< before pl_frame
+        result += pl0xTimings(regs);
+        result += 33; //< before trb_rep
+
+        if (trbRep == 0)
+        {
+            result += 7 + 4 + 11;
+            return result;
+        }
+        if (trbRep > 1)
+        {
+            result += 34 + (11 - 5);
+            return result;
+        }
+        result += 34 + 42;
+        return result;
+    }
+};
+
 class PgsPacker
 {
 public:
@@ -70,8 +267,6 @@ public:
         int unusedNoise = 0;
     };
 
-    using RegMap = std::map<int, int>;
-    using RegVector = std::array<int, 14>;
 
     std::map<RegMap, uint16_t> regsToSymbol;
     std::map<uint16_t, RegMap> symbolToRegs;
@@ -99,12 +294,6 @@ public:
     std::vector<int> timingsData;
 
 private:
-
-    bool isPsg2(const RegMap& regs) const
-    {
-        bool usePsg2 = regs.size() > 2;
-        return usePsg2;
-    }
 
     uint16_t toSymbol(const RegMap& regs)
     {
@@ -348,55 +537,18 @@ private:
         }
     }
 
-    int trbRepTimings(int trdRep)
-    {
-        if (trdRep == 0)
-            return 7 + 4 + 11;
-        int result = 7 + 4 + 5;
-        if (trdRep > 1)
-        {
-            result += 13 + 11;
-            return result;
-        }
-
-        result += 13 + 5 + 42;
-        return result;
-    }
-
-    int delayTimings(TimingState state, int trbRep)
-    {
-        int result = 0;    //< Timing on enter to pause
-        switch (state)
-        {
-            case TimingState::single:
-                result = 94 + 6 + 16 + 11;
-                return result;
-            case TimingState::first:
-                result = 94 + 41 + 84;
-                return result;
-            case TimingState::mid:
-                result = 12 +10+11+11;
-                return result;
-            case TimingState::last:
-                result = 12 + 26+38;
-                result += trbRepTimings(trbRep);
-
-        }
-        
-    }
-
     void serializeDelayTimings(int count, int trbRep)
     {
         if (count == 1)
         {
-            timingsData.push_back(delayTimings(TimingState::single, trbRep));
+            timingsData.push_back(TimingsHelper::delayTimings(TimingState::single, trbRep));
         }
         else
         {
-            timingsData.push_back(delayTimings(TimingState::first, trbRep));
+            timingsData.push_back(TimingsHelper::delayTimings(TimingState::first, trbRep));
             for (int i = 1; i < count - 1; ++i)
-                timingsData.push_back(delayTimings(TimingState::mid, trbRep));
-            timingsData.push_back(delayTimings(TimingState::last, trbRep));
+                timingsData.push_back(TimingsHelper::delayTimings(TimingState::mid, trbRep));
+            timingsData.push_back(TimingsHelper::delayTimings(TimingState::last, trbRep));
         }
     }
 
@@ -464,139 +616,19 @@ private:
         return result;
     }
 
-    int pl00TimeForFrame(const RegMap& regs)
-    {
-        int result = 140;
-        if (regs.size() == 1)
-            result += -(16 + 4 + 16 + 7) + 5;
-        return result;
-    }
-
-    auto splitRegs(const RegMap& regs)
-    {
-        int firstRegs = 0;
-        int secondRegs = 0;
-        for (const auto& reg : regs)
-        {
-            if (reg.first < 6)
-                ++firstRegs;
-            else
-                ++secondRegs;
-        }
-        return std::tuple<int, int>(firstRegs, secondRegs);
-    }
-
-    int play_all_6_13(const RegMap& regs)
-    {
-        int result = 341;
-        if (regs.count(13) == 0)
-            result -= 40;
-        return result;
-    }
-
-    int play_by_mask_13_6(const RegMap& regs)
-    {
-        int result = 53;
-        if (regs.count(13) == 0)
-            result -= 34;
-        for (int i = 12; i > 6; --i)
-        {
-            result += 54;
-            if (regs.count(i) == 0)
-                result -= 34;
-        }
-
-        if (regs.count(6) == 0)
-            result += 4 + 11;
-        else
-            result += 55;
-
-        return result;
-    }
-
-    int play_all_0_5_end(const RegMap& regs)
-    {
-        const auto [firstRegs, secondRegs] = splitRegs(regs);
-        int secondRegsExcept13 = secondRegs;
-        if (regs.count(13) == 1)
-            --secondRegsExcept13;
-
-        int result = 24;
-
-        if (secondRegsExcept13 == 7)
-            result += play_all_6_13(regs);
-        else
-            result += 5 + play_by_mask_13_6(regs);
-
-        return result;
-    }
-
-    int pl0xTimings(const RegMap& regs)
-    {
-        const auto [firstRegs, secondRegs] = splitRegs(regs);
-        int secondRegsExcept13 = secondRegs;
-        if (regs.count(13) == 1)
-            --secondRegsExcept13;
-        bool psg2 = isPsg2(regs);
-        if (!psg2)
-            return 21 + 5 + pl00TimeForFrame(regs);
-
-        // PSG2 timings
-        int result = 44; //< Till jump to play_all_0_5
-
-        if (firstRegs < 6)
-        {
-            // play_by_mask_0_5
-            for (int i = 0; i < 5; ++i)
-            {
-                if (regs.count(i) == 0)
-                    result += 20; //< There is no reg i.
-                else
-                    result += 54;
-            }
-
-            if (regs.count(5) == 0)
-            {
-                result += 4 + 12; // 'play_all_0_5_end' reached
-                result += play_all_0_5_end(regs);
-            }
-            else
-            {
-                result += 43 + 24;
-                if (secondRegsExcept13 == 7)
-                    result += 5 + play_all_6_13(regs);
-                else
-                    result += 7 + 10 + play_by_mask_13_6(regs);
-            }
-        }
-        else
-        {
-            result += 5;
-            result += 240;
-            result += play_all_0_5_end(regs);
-        }
-
-        return result;
-    }
-
     int shortRefTiming(int pos)
     {
         auto symbol = ayFrames[pos];
         auto regs = symbolToRegs[symbol];
 
-        int result = 118;
-        result += pl0xTimings(regs);
-        return result;
+        return TimingsHelper::shortRefTimings(regs);
     }
 
     int longRefInitTiming(int pos)
     {
         auto symbol = ayFrames[pos];
         auto regs = symbolToRegs[symbol];
-
-        int result = 168;
-        result += pl0xTimings(regs);
-        return result;
+        return TimingsHelper::longRefInitTiming(regs);
     }
 
     bool isNestedShortRef(int pos)
@@ -630,31 +662,11 @@ private:
             else
             {
                 auto regs = symbolToRegs[symbol];
-                int result = frameTimings(regs, reducedLen);
+                int result = TimingsHelper::frameTimings(regs, reducedLen);
                 timingsData.push_back(result);
                 --reducedLen;
             }
         }
-    }
-
-    int frameTimings(const RegMap& regs, int trbRep)
-    {
-        int result = 32; //< before pl_frame
-        result += pl0xTimings(regs);
-        result += 33; //< before trb_rep
-
-        if (trbRep == 0)
-        {
-            result += 7 + 4 + 11;
-            return result;
-        }
-        if (trbRep > 1)
-        {
-            result += 34 + (11-5);
-            return result;
-        }
-        result += 34+42;
-        return result;
     }
 
     void serializeFrame(uint16_t pos)
@@ -665,7 +677,7 @@ private:
         auto regs = symbolToRegs[symbol];
 
         if (flags & dumpTimings)
-           timingsData.push_back(frameTimings(regs, 0));
+           timingsData.push_back(TimingsHelper::frameTimings(regs, 0));
 
         bool usePsg2 = isPsg2(regs);
 
@@ -791,7 +803,7 @@ private:
             {
 
                 const auto regs = symbolToRegs[ayFrames[chainPos]];
-                int t = pl0xTimings(regs);
+                int t = TimingsHelper::pl0xTimings(regs);
                 int overrun = (168 - 141) - (661 - t);
                 if (overrun > 0)
                     return std::tuple<int, int, int> { -1, -1, -1}; //< Long refs is slower
