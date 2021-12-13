@@ -497,16 +497,16 @@ private:
     int play_by_mask_13_6(const RegMap& regs)
     {
         int result = 53;
-        if (regs.count(6) == 0)
+        if (regs.count(13) == 0)
             result -= 34;
-        for (int i = 7; i < 13; ++i)
+        for (int i = 12; i > 6; --i)
         {
             result += 54;
             if (regs.count(i) == 0)
                 result -= 34;
         }
 
-        if (regs.count(13) == 0)
+        if (regs.count(6) == 0)
             result += 4 + 11;
         else
             result += 55;
@@ -1078,7 +1078,7 @@ int main(int argc, char** argv)
     std::cout << "Total frames:\t" << packer.ayFrames.size() << std::endl;
     std::cout << "Ref frames:\t" << packer.stats.allRepeatFrames << std::endl;
     std::cout << "Empty frames:\t" << packer.stats.emptyCnt << std::endl;
-    std::cout << "PSG frames:\t" << packer.stats.psgFrames << std::endl;
+    std::cout << "Frames:\t" << packer.stats.psgFrames << std::endl;
     if (packer.flags & dumpTimings)
     {
         int pos = 0;
@@ -1093,7 +1093,7 @@ int main(int argc, char** argv)
             }
             totalTicks += packer.timingsData[i];
         }
-        std::cout << "The most heavy frame: " << t << "t, pos " << pos << ". Avarage frame: " << totalTicks / (packer.timingsData.size()) << "t" << std::endl;
+        std::cout << "The longest frame: " << t << "t, pos " << pos << ". Avarage frame: " << totalTicks / (packer.timingsData.size()) << "t" << std::endl;
     }
 
     return 0;

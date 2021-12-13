@@ -225,6 +225,7 @@ play_all_0_5_end
 			//  total: 296+24=320/313 (till play_all_6_13)
 play_all_6_13
 			cpl						; 0->ff, keep flag c
+			// write regs [6..12] or [6..13] depend on flag
 			jr	 c, 1f				; 4+7=11
 			dup 8
 				inc d				
