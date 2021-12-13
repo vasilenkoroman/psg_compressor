@@ -29,6 +29,14 @@ enum Flags
     dumpTimings = 512
 };
 
+enum class TimingState
+{
+    single,
+    first,
+    mid,
+    last
+};
+
 static const int kDefaultFlags = cleanNoise - 1;
 
 class PgsPacker
@@ -340,8 +348,63 @@ private:
         }
     }
 
+    int trbRepTimings(int trdRep)
+    {
+        if (trdRep == 0)
+            return 7 + 4 + 11;
+        int result = 7 + 4 + 5;
+        if (trdRep > 1)
+        {
+            result += 13 + 11;
+            return result;
+        }
+
+        result += 13 + 5 + 42;
+        return result;
+    }
+
+    int delayTimings(TimingState state, int trbRep)
+    {
+        int result = 0;    //< Timing on enter to pause
+        switch (state)
+        {
+            case TimingState::single:
+                result = 94 + 6 + 16 + 11;
+                return result;
+            case TimingState::first:
+                result = 94 + 41 + 84;
+                return result;
+            case TimingState::mid:
+                result = 12 +10+11+11;
+                return result;
+            case TimingState::last:
+                result = 12 + 26+38;
+                result += trbRepTimings(trbRep);
+
+        }
+        
+    }
+
+    void serializeDelayTimings(int count, int trbRep)
+    {
+        if (count == 1)
+        {
+            timingsData.push_back(delayTimings(TimingState::single, trbRep));
+        }
+        else
+        {
+            timingsData.push_back(delayTimings(TimingState::first, trbRep));
+            for (int i = 1; i < count - 1; ++i)
+                timingsData.push_back(delayTimings(TimingState::mid, trbRep));
+            timingsData.push_back(delayTimings(TimingState::last, trbRep));
+        }
+    }
+
     void serializeEmptyFrames(int count)
     {
+        if (count > 0 && (flags & dumpTimings))
+            serializeDelayTimings(count, 0);
+
         while (count > 0)
         {
             uint8_t value = std::min(33, count);
@@ -360,26 +423,29 @@ private:
         return b;
     }
 
-    void serializeRef(uint16_t pos, uint8_t size)
+    void serializeRef(uint16_t pos, int len, uint8_t reducedLen)
     {
+        if (flags & dumpTimings)
+            serializeRefTimings(pos, len, reducedLen);
+
         int offset = frameOffsets[pos];
-        int recordSize = size == 1 ? 2 : 3;
+        int recordSize = reducedLen == 1 ? 2 : 3;
         int16_t delta = offset - compressedData.size() - recordSize;
-        if (size > 1)
+        if (reducedLen > 1)
             ++delta;
         assert(delta < 0);
 
         uint8_t* ptr = (uint8_t*)&delta;
 
-        if (size == 1)
+        if (reducedLen == 1)
             ptr[1] &= ~0x40; // reset 6-th bit
 
         // Serialize in network byte order
         compressedData.push_back(ptr[1]);
         compressedData.push_back(ptr[0]);
 
-        if (size > 1)
-            compressedData.push_back(size - 1);
+        if (reducedLen > 1)
+            compressedData.push_back(reducedLen - 1);
     };
     
     uint8_t makeRegMask(const RegMap& regs, int from, int to)
@@ -441,7 +507,7 @@ private:
         }
 
         if (regs.count(13) == 0)
-            result += 4 + 10;
+            result += 4 + 11;
         else
             result += 55;
 
@@ -513,13 +579,81 @@ private:
         return result;
     }
 
-    int getFrameDuration(const RegMap& regs)
+    int shortRefTiming(int pos)
+    {
+        auto symbol = ayFrames[pos];
+        auto regs = symbolToRegs[symbol];
+
+        int result = 118;
+        result += pl0xTimings(regs);
+        return result;
+    }
+
+    int longRefInitTiming(int pos)
+    {
+        auto symbol = ayFrames[pos];
+        auto regs = symbolToRegs[symbol];
+
+        int result = 168;
+        result += pl0xTimings(regs);
+        return result;
+    }
+
+    bool isNestedShortRef(int pos)
+    {
+        // TODO: implement me
+        return false;
+    }
+
+    void serializeRefTimings(int pos, int len, int reducedLen)
+    {
+        if (len == 1)
+        {
+            timingsData.push_back(shortRefTiming(pos)); // First frame
+            return;
+        }
+
+        timingsData.push_back(longRefInitTiming(pos)); // First frame
+        for (int j = 1; j < len; ++j)
+        {
+            ++pos;
+            auto symbol = ayFrames[pos];
+            if (symbol <= kMaxDelay)
+            {
+                serializeDelayTimings(symbol, reducedLen);
+                --reducedLen;
+            }
+            else if (isNestedShortRef(pos))
+            {
+                timingsData.push_back(shortRefTiming(pos));
+            }
+            else
+            {
+                auto regs = symbolToRegs[symbol];
+                int result = frameTimings(regs, reducedLen);
+                timingsData.push_back(result);
+                --reducedLen;
+            }
+        }
+    }
+
+    int frameTimings(const RegMap& regs, int trbRep)
     {
         int result = 32; //< before pl_frame
         result += pl0xTimings(regs);
         result += 33; //< before trb_rep
-        result += 7+4+11; //< There is no trb_rep counter;
 
+        if (trbRep == 0)
+        {
+            result += 7 + 4 + 11;
+            return result;
+        }
+        if (trbRep > 1)
+        {
+            result += 34 + (11-5);
+            return result;
+        }
+        result += 34+42;
         return result;
     }
 
@@ -531,7 +665,7 @@ private:
         auto regs = symbolToRegs[symbol];
 
         if (flags & dumpTimings)
-           timingsData.push_back(getFrameDuration(regs));
+           timingsData.push_back(frameTimings(regs, 0));
 
         bool usePsg2 = isPsg2(regs);
 
@@ -712,7 +846,6 @@ public:
             uint8_t value = *pos;
             if (value >= 0xfe)
             {
-                ++stats.psgFrames;
                 if (!changedRegs.empty())
                 {
                     if (!writeRegs())
@@ -721,12 +854,14 @@ public:
 
                 if (value == 0xff)
                 {
+                    ++stats.psgFrames;
                     ++delayCounter;
                     ++pos;
                 }
                 else
                 {
                     delayCounter += pos[1] * 4;
+                    stats.psgFrames += delayCounter;
                     pos += 2;
                 }
             }
@@ -793,7 +928,7 @@ public:
                 const auto [pos, len, reducedLen] = findRef(i);
                 if (len > 0)
                 {
-                    serializeRef(pos, reducedLen);
+                    serializeRef(pos, len, reducedLen);
 
                     for (int j = i; j < i + len; ++j)
                         refCount[j] = len;
@@ -838,6 +973,28 @@ public:
         }
 
         fileOut.write((const char*) updatedPsgData.data(), updatedPsgData.size());
+
+        return 0;
+    }
+
+    int writeTimingsFile(const std::string& outputFileName)
+    {
+        using namespace std;
+
+        ofstream fileOut;
+        fileOut.open(outputFileName, std::ios::trunc);
+        if (!fileOut.is_open())
+        {
+            std::cerr << "Can't open output file " << outputFileName << std::endl;
+            return -1;
+        }
+
+        fileOut << "frame; timings; with call" << std::endl;
+        for (int i = 0; i < timingsData.size(); ++i)
+        {
+            fileOut << i << ";" << timingsData[i] << ";" << timingsData[i]+17 << std::endl;
+            
+        }
 
         return 0;
     }
@@ -914,6 +1071,8 @@ int main(int argc, char** argv)
         return result;
     if (packer.flags & dumpPsg)
         packer.writeRawPsg(std::string(argv[argc - 1]) + ".psg");
+    if (packer.flags & dumpTimings)
+        packer.writeTimingsFile(std::string(argv[argc - 1]) + ".csv");
 
     auto timeEnd = steady_clock::now();
 
@@ -926,6 +1085,22 @@ int main(int argc, char** argv)
     std::cout << "Ref frames:\t" << packer.stats.allRepeatFrames << std::endl;
     std::cout << "Empty frames:\t" << packer.stats.emptyCnt << std::endl;
     std::cout << "PSG frames:\t" << packer.stats.psgFrames << std::endl;
+    if (packer.flags & dumpTimings)
+    {
+        int pos = 0;
+        int t = 0;
+        int totalTicks = 0;
+        for (int i = 0; i < packer.timingsData.size(); ++i)
+        {
+            if (packer.timingsData[i] > pos)
+            {
+                pos = i;
+                t = packer.timingsData[i];
+            }
+            totalTicks += packer.timingsData[i];
+        }
+        std::cout << "The most heavy frame: " << t << "t, pos " << pos << ". Avarage frame: " << totalTicks / (packer.timingsData.size()) << "t" << std::endl;
+    }
 
     return 0;
 }
