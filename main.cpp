@@ -761,12 +761,15 @@ private:
     {
         if (master.symbol == slave.symbol)
             return true;
-        if (slave.symbol <= kMaxDelay)
+        if (slave.symbol <= kMaxDelay || master.delta.size() < slave.delta.size())
             return false;
         
+        auto itr = master.delta.begin();
         for (const auto& reg: slave.delta)
         {
-            if (!master.delta.count(reg.first))
+            while (itr != master.delta.end() && itr->first < reg.first)
+                ++itr;
+            if (itr == master.delta.end() || itr->first != reg.first || itr->second != reg.second)
                 return false;
         }
         for (const auto& reg: master.delta)
@@ -774,6 +777,8 @@ private:
             if (slave.fullState[reg.first] != reg.second)
                 return false;
         }
+        if (master.delta.count(13) == 1 && slave.delta.count(13) == 0)
+            return false;
 
         return true;
     }
