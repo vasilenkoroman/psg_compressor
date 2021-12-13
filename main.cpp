@@ -15,7 +15,6 @@ static const int kMaxRefOffset = 16384;
 enum Flags
 {
     none = 0,
-    fastDepack = 1, //< Reduce compression level, but make packet PSG more fast to play
     
     cleanRegs  = 2,
     cleanToneA = 4,
@@ -35,6 +34,15 @@ enum class TimingState
     first,
     mid,
     last
+};
+
+enum CompressionLevel
+{
+    l0,   //< Maximum speed. Max frame time=802t.
+    l1,   //< Same max frame time, avarage frame size worse a little bit, better compression.
+    l2,   //< Max frame time about 828t, better compression.
+    l3,   //< Max frame time above 900t, better compression.
+    l4,   //< Allow recursive refs. It requires slow_psg_player.asm
 };
 
 static const int kDefaultFlags = cleanNoise - 1;
@@ -299,6 +307,7 @@ public:
     int flags = kDefaultFlags;
     bool firstFrame = false;
     std::vector<int> timingsData;
+    CompressionLevel level = CompressionLevel::l1;
 
 private:
 
@@ -518,7 +527,7 @@ private:
             }
         }
 
-        if (flags & fastDepack)
+        if (level < l3)
             extendToFullChangeIfNeed();
 
         uint16_t symbol = toSymbol(changedRegs);
@@ -561,7 +570,7 @@ private:
 
     void serializeEmptyFrames(int count)
     {
-        if (count > 0 && (flags & dumpTimings))
+        if (count > 0)
             serializeDelayTimings(count, 0);
 
         while (count > 0)
@@ -584,8 +593,7 @@ private:
 
     void serializeRef(uint16_t pos, int len, uint8_t reducedLen)
     {
-        if (flags & dumpTimings)
-            serializeRefTimings(pos, len, reducedLen);
+        serializeRefTimings(pos, len, reducedLen);
 
         int offset = frameOffsets[pos];
         int recordSize = reducedLen == 1 ? 2 : 3;
@@ -683,8 +691,7 @@ private:
         uint16_t symbol = ayFrames[pos].symbol;
         auto regs = symbolToRegs[symbol];
 
-        if (flags & dumpTimings)
-           timingsData.push_back(TimingsHelper::frameTimings(regs, 0));
+        timingsData.push_back(TimingsHelper::frameTimings(regs, 0));
 
         bool usePsg2 = isPsg2(regs);
 
@@ -761,6 +768,10 @@ private:
     {
         if (master.symbol == slave.symbol)
             return true;
+
+        if (level < l1)
+            return false;
+
         if (slave.symbol <= kMaxDelay || master.delta.size() < slave.delta.size())
             return false;
         
@@ -798,7 +809,6 @@ private:
                 continue;
 
             if (isFrameCover(ayFrames[i], ayFrames[pos]) && refCount[i] == 0)
-            //if (ayFrames[i] == ayFrames[pos])
             {
                 int chainLen = 0;
                 int reducedLen = 0;
@@ -807,8 +817,7 @@ private:
                 
                 for (int j = 0; j < maxLength && i + j < pos && reducedLen < 128; ++j)
                 {
-                    //if (refCount[i + j] > 1 || ayFrames[i + j] != ayFrames[pos + j])
-                    if (refCount[i + j] > 1 || !isFrameCover(ayFrames[i + j], ayFrames[pos + j]))
+                    if ((refCount[i + j] > 1 && level < l4) || !isFrameCover(ayFrames[i + j], ayFrames[pos + j]))
                         break;
                     ++chainLen;
                     if (refCount[i + j] == 0)
@@ -834,7 +843,7 @@ private:
                 }
             }
         }
-        if (flags & fastDepack)
+        if (level < l2)
         {
             if (maxChainLen > 1)
             {
@@ -1060,12 +1069,18 @@ int main(int argc, char** argv)
     if (argc < 3)
     {
         std::cout << "Usage: psg_pack [OPTION] input_file output_file" << std::endl;
-        std::cout << "Example: psg_pack -fc file1.psg packetd.mus" << std::endl;
+        std::cout << "Example: psg_pack --level 1 file1.psg packetd.mus" << std::endl;
         std::cout << "Default options: --fast --clean" << std::endl;
         std::cout << "" << std::endl;
         std::cout << "Options:" << std::endl;
-        std::cout << "-f, --fast\t Optimize archive for unpacking (max 799t)." << std::endl;
-        std::cout << "-n, --normal\t Better compression but more slow unpacking (~920t)." << std::endl;
+        std::cout << "-l, --level\t Compression level:" << std::endl;
+
+        std::cout << "\t0\tMaximum speed. Max frame time=802t" << std::endl;
+        std::cout << "\t1\tSame max frame time, avarage frame size worse a little bit, better compression" << std::endl;
+        std::cout << "\t2\tMax frame time about 828t, better compression" << std::endl;
+        std::cout << "\t3\tMax frame time above 900t, better compression" << std::endl;
+        std::cout << "\t4\tMax frame time above 1000t, signitifally better compression. Requires 'slow_psg_player.asm'" << std::endl;
+
         std::cout << "-c, --clean\t Clean AY registers before packing. Improve compression level but incompatible with some tracks." << std::endl;
         std::cout << "-k, --keep\t --Don't clean AY regiaters." << std::endl;
         std::cout << "-i, --info\t Print timings info for each compresed frame." << std::endl;
@@ -1076,13 +1091,20 @@ int main(int argc, char** argv)
     for (int i = 1; i < argc - 2; ++i)
     {
         const std::string s = argv[i];
-        if (hasShortOpt(s,'f') || s == "--fast")
+        if (hasShortOpt(s,'l') || s == "--level")
         {
-            packer.flags |= fastDepack;
-        }
-        if (hasShortOpt(s, 'n') || s == "--normal")
-        {
-            packer.flags &= ~fastDepack;
+            if (i == argc - 1)
+            {
+                std::cerr << "It need to define compression leven in range [0..4] after argument '--level'" << std::endl;
+                return -1;
+            }
+            int value = atoi(argv[i + 1]);
+            if (value < 0 || value > 4)
+            {
+                std::cerr << "Invalid compression level " << value << ". Expected value in range [0..4]" << std::endl;
+                return -1;
+            }
+            packer.level = (CompressionLevel) value;
         }
         if (hasShortOpt(s, 'c') || s == "--clean")
         {
@@ -1104,7 +1126,7 @@ int main(int argc, char** argv)
 
     using namespace std::chrono;
 
-    std::cout << "Starting compression..." << std::endl;
+    std::cout << "Starting compression at level " << packer.level << std::endl;
     auto timeBegin = std::chrono::steady_clock::now();
     auto result = packer.parsePsg(argv[argc-2]);
     if (result == 0)
@@ -1126,23 +1148,26 @@ int main(int argc, char** argv)
     std::cout << "Total frames:\t" << packer.ayFrames.size() << std::endl;
     std::cout << "Ref frames:\t" << packer.stats.allRepeatFrames << std::endl;
     std::cout << "Empty frames:\t" << packer.stats.emptyCnt << std::endl;
-    std::cout << "Frames:\t" << packer.stats.psgFrames << std::endl;
-    if (packer.flags & dumpTimings)
+    std::cout << "Frames:\t\t" << packer.stats.psgFrames << std::endl;
+    
+
+    int pos = 0;
+    int t = 0;
+    int totalTicks = 0;
+    for (int i = 0; i < packer.timingsData.size(); ++i)
     {
-        int pos = 0;
-        int t = 0;
-        int totalTicks = 0;
-        for (int i = 0; i < packer.timingsData.size(); ++i)
+        if (packer.timingsData[i] > t)
         {
-            if (packer.timingsData[i] > t)
-            {
-                pos = i;
-                t = packer.timingsData[i];
-            }
-            totalTicks += packer.timingsData[i];
+            pos = i;
+            t = packer.timingsData[i];
         }
-        std::cout << "The longest frame: " << t << "t, pos " << pos << ". Avarage frame: " << totalTicks / (packer.timingsData.size()) << "t" << std::endl;
+        totalTicks += packer.timingsData[i];
     }
+
+    std::string comment;
+    if (packer.level == CompressionLevel::l4)
+        comment = " (+ nested ref timings, not implemented yet)";
+    std::cout << "The longest frame: " << t << "t" << comment << ", pos " << pos << ". Avarage frame: " << totalTicks / (packer.timingsData.size()) << "t" << std::endl;
 
     return 0;
 }
