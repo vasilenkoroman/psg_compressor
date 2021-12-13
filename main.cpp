@@ -420,22 +420,94 @@ private:
         return std::tuple<int, int>(firstRegs, secondRegs);
     }
 
+    int play_all_6_13(const RegMap& regs)
+    {
+        int result = 341;
+        if (regs.count(13) == 0)
+            result -= 40;
+        return result;
+    }
+
+    int play_by_mask_13_6(const RegMap& regs)
+    {
+        int result = 53;
+        if (regs.count(6) == 0)
+            result -= 34;
+        for (int i = 7; i < 13; ++i)
+        {
+            result += 54;
+            if (regs.count(i) == 0)
+                result -= 34;
+        }
+
+        if (regs.count(13) == 0)
+            result += 4 + 10;
+        else
+            result += 55;
+
+        return result;
+    }
+
+    int play_all_0_5_end(const RegMap& regs)
+    {
+        const auto [firstRegs, secondRegs] = splitRegs(regs);
+        int secondRegsExcept13 = secondRegs;
+        if (regs.count(13) == 1)
+            --secondRegsExcept13;
+
+        int result = 24;
+
+        if (secondRegsExcept13 == 7)
+            result += play_all_6_13(regs);
+        else
+            result += 5 + play_by_mask_13_6(regs);
+
+        return result;
+    }
+
     int pl0xTimings(const RegMap& regs)
     {
         const auto [firstRegs, secondRegs] = splitRegs(regs);
+        int secondRegsExcept13 = secondRegs;
+        if (regs.count(13) == 1)
+            --secondRegsExcept13;
         bool psg2 = isPsg2(regs);
         if (!psg2)
             return 21 + 5 + pl00TimeForFrame(regs);
 
         // PSG2 timings
         int result = 44; //< Till jump to play_all_0_5
+
         if (firstRegs < 6)
         {
             // play_by_mask_0_5
-            if (regs.count(0) == 0)
-                result += 4 + 12; //< There is no reg 0.
+            for (int i = 0; i < 5; ++i)
+            {
+                if (regs.count(i) == 0)
+                    result += 20; //< There is no reg i.
+                else
+                    result += 54;
+            }
+
+            if (regs.count(5) == 0)
+            {
+                result += 4 + 12; // 'play_all_0_5_end' reached
+                result += play_all_0_5_end(regs);
+            }
             else
-                result += 47;
+            {
+                result += 43 + 24;
+                if (secondRegsExcept13 == 7)
+                    result += 5 + play_all_6_13(regs);
+                else
+                    result += 7 + 10 + play_by_mask_13_6(regs);
+            }
+        }
+        else
+        {
+            result += 5;
+            result += 240;
+            result += play_all_0_5_end(regs);
         }
 
         return result;
@@ -446,7 +518,7 @@ private:
         int result = 32; //< before pl_frame
         result += pl0xTimings(regs);
         result += 33; //< before trb_rep
-        result += 7+7+10; //< There is no trb_rep counter;
+        result += 7+4+11; //< There is no trb_rep counter;
 
         return result;
     }
@@ -553,7 +625,7 @@ private:
                 int serializedSize = 0;
                 std::vector<int> sizes;
                 
-                for (int j = 0; j < maxLength && i + j < pos && reducedLen < 127; ++j)
+                for (int j = 0; j < maxLength && i + j < pos && reducedLen < 128; ++j)
                 {
                     if (ayFrames[i + j] != ayFrames[pos + j] || refCount[i + j] > 1)
                         break;
@@ -579,7 +651,6 @@ private:
                 }
             }
         }
-
 #if 1
         if (flags & fastDepack)
         {
@@ -589,7 +660,12 @@ private:
                 auto [firstRegs, secondRegs] = splitRegs(regs);
 
                 if (firstRegs >= 4 && secondRegs >= 5)
+                {
+                    if (secondRegs == 7 && regs.count(13) == 0)
+                        ;   //< ok for timings
+                    else
                     return std::tuple<int, int, int> { -1, -1, -1}; //< Long refs is slower
+                }
             }
         }
 #endif
@@ -805,31 +881,25 @@ int main(int argc, char** argv)
         {
             packer.flags |= fastDepack;
         }
-        else if (hasShortOpt(s, 'n') || s == "--normal")
+        if (hasShortOpt(s, 'n') || s == "--normal")
         {
             packer.flags &= ~fastDepack;
         }
-        else if (hasShortOpt(s, 'c') || s == "--clean")
+        if (hasShortOpt(s, 'c') || s == "--clean")
         {
             packer.flags |= cleanRegs;
         }
-        else if (hasShortOpt(s, 'k') || s == "--keep")
+        if (hasShortOpt(s, 'k') || s == "--keep")
         {
             packer.flags &= ~cleanRegs;
         }
-        else if (hasShortOpt(s, 'd') || s == "--dump")
+        if (hasShortOpt(s, 'd') || s == "--dump")
         {
             packer.flags |= dumpPsg;
         }
-        else if (hasShortOpt(s, 'i') || s == "--info")
+        if (hasShortOpt(s, 'i') || s == "--info")
         {
             packer.flags |= dumpTimings;
-            return -1;
-        }
-        else
-        {
-            std::cerr << "Unknown parameter " << s << std::endl;
-            return -1;
         }
     }
 
