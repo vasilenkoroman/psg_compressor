@@ -268,9 +268,16 @@ public:
     };
 
 
+    struct FrameInfo
+    {
+        uint16_t symbol = 0;
+        RegVector fullState;
+        RegMap delta;
+    };
+
     std::map<RegMap, uint16_t> regsToSymbol;
     std::map<uint16_t, RegMap> symbolToRegs;
-    std::vector<uint16_t> ayFrames;
+    std::vector<FrameInfo> ayFrames;
 
     RegMap changedRegs;
 
@@ -515,7 +522,7 @@ private:
             extendToFullChangeIfNeed();
 
         uint16_t symbol = toSymbol(changedRegs);
-        ayFrames.push_back(symbol); //< Flush previous frame.
+        ayFrames.push_back({ symbol, lastCleanedRegs, changedRegs }); //< Flush previous frame.
 
         changedRegs.clear();
         return true;
@@ -531,8 +538,8 @@ private:
 
         while (delay > 0)
         {
-            int d = std::min(kMaxDelay, delay);
-            ayFrames.push_back(d); //< Special code for delay
+            uint16_t d = std::min(kMaxDelay, delay);
+            ayFrames.push_back({ d }); //< Special code for delay
             delay -= d;
         }
     }
@@ -618,7 +625,7 @@ private:
 
     int shortRefTiming(int pos)
     {
-        auto symbol = ayFrames[pos];
+        auto symbol = ayFrames[pos].symbol;
         auto regs = symbolToRegs[symbol];
 
         return TimingsHelper::shortRefTimings(regs);
@@ -626,7 +633,7 @@ private:
 
     int longRefInitTiming(int pos)
     {
-        auto symbol = ayFrames[pos];
+        auto symbol = ayFrames[pos].symbol;
         auto regs = symbolToRegs[symbol];
         return TimingsHelper::longRefInitTiming(regs);
     }
@@ -649,7 +656,7 @@ private:
         for (int j = 1; j < len; ++j)
         {
             ++pos;
-            auto symbol = ayFrames[pos];
+            auto symbol = ayFrames[pos].symbol;
             if (symbol <= kMaxDelay)
             {
                 serializeDelayTimings(symbol, reducedLen);
@@ -673,7 +680,7 @@ private:
     {
         int prevSize = compressedData.size();
 
-        uint16_t symbol = ayFrames[pos];
+        uint16_t symbol = ayFrames[pos].symbol;
         auto regs = symbolToRegs[symbol];
 
         if (flags & dumpTimings)
@@ -740,7 +747,7 @@ private:
 
     int serializedFrameSize(uint16_t pos)
     {
-        const uint16_t symbol = ayFrames[pos];
+        const uint16_t symbol = ayFrames[pos].symbol;
         if (symbol <= kMaxDelay)
             return 1;
 
@@ -749,6 +756,27 @@ private:
             return 2 + regs.size();
         return regs.size() * 2;
     };
+
+    bool isFrameCover(const FrameInfo& master, const FrameInfo& slave)
+    {
+        if (master.symbol == slave.symbol)
+            return true;
+        if (slave.symbol <= kMaxDelay)
+            return false;
+        
+        for (const auto& reg: slave.delta)
+        {
+            if (!master.delta.count(reg.first))
+                return false;
+        }
+        for (const auto& reg: master.delta)
+        {
+            if (slave.fullState[reg.first] != reg.second)
+                return false;
+        }
+
+        return true;
+    }
 
     auto findRef(int pos)
     {
@@ -764,7 +792,8 @@ private:
             if (frameOffsets[pos] - frameOffsets[i] + 3 > kMaxRefOffset)
                 continue;
 
-            if (ayFrames[i] == ayFrames[pos] && refCount[i] == 0)
+            if (isFrameCover(ayFrames[i], ayFrames[pos]) && refCount[i] == 0)
+            //if (ayFrames[i] == ayFrames[pos])
             {
                 int chainLen = 0;
                 int reducedLen = 0;
@@ -773,11 +802,14 @@ private:
                 
                 for (int j = 0; j < maxLength && i + j < pos && reducedLen < 128; ++j)
                 {
-                    if (ayFrames[i + j] != ayFrames[pos + j] || refCount[i + j] > 1)
+                    //if (refCount[i + j] > 1 || ayFrames[i + j] != ayFrames[pos + j])
+                    if (refCount[i + j] > 1 || !isFrameCover(ayFrames[i + j], ayFrames[pos + j]))
                         break;
                     ++chainLen;
                     if (refCount[i + j] == 0)
+                    {
                         ++reducedLen; //< Don't count 1-symbol refs during ref serialization
+                    }
                     serializedSize += serializedFrameSize(pos + j);
                     sizes.push_back(serializedSize);
                 }
@@ -802,7 +834,7 @@ private:
             if (maxChainLen > 1)
             {
 
-                const auto regs = symbolToRegs[ayFrames[chainPos]];
+                const auto regs = symbolToRegs[ayFrames[chainPos].symbol];
                 int t = TimingsHelper::pl0xTimings(regs);
                 int overrun = (168 - 141) - (661 - t);
                 if (overrun > 0)
@@ -919,17 +951,16 @@ public:
             while (frameOffsets.size() <= i)
                 frameOffsets.push_back(compressedData.size());
 
-            if (ayFrames[i] <= kMaxDelay)
+            if (ayFrames[i].symbol <= kMaxDelay)
             {
-                serializeEmptyFrames(ayFrames[i]);
-                stats.emptyFrames += ayFrames[i];
+                serializeEmptyFrames(ayFrames[i].symbol);
+                stats.emptyFrames += ayFrames[i].symbol;
                 ++stats.emptyCnt;
                 ++i;
             }
             else
             {
-                const auto symbol = ayFrames[i];
-                const auto currentRegs = symbolToRegs[symbol];
+                const auto symbol = ayFrames[i].symbol;
 
                 const auto [pos, len, reducedLen] = findRef(i);
                 if (len > 0)
