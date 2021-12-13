@@ -63,7 +63,7 @@ saved_track
 			// total: 34+38=72t
 		
 // pause or end track
-pl_pause								; 58+7+12=77 on enter
+pl_pause								; 94 on enter
 			inc hl
 			ld (pl_track+1), hl
 			ret z
@@ -80,7 +80,7 @@ pl_pause								; 58+7+12=77 on enter
 			
 			pop	 hl						
 			ret							; 4+4+13+4+13+10+16+10+10=84
-			// total for pause: 77+41+84=202t
+			// total for pause: 94+41+84=219t
 
 endtrack	//end of track
 			pop	 hl
@@ -157,7 +157,7 @@ pl10
 
 			ld a, (hl)
 			add a		            	; 16+8+11+7+4=46t
-			// total: 32+30+5+46=113t + pl0x time(661t) = 774t(max)
+			// total: 32+5+30+5+46=118t + pl0x time(661t) = 779t(max)
 
 pl0x		ld bc, #fffd				
 			add a					
@@ -188,11 +188,11 @@ play_by_mask_0_5
 			ld a, (hl)
 			inc hl					
 			add a
-			jr z,play_all_13_6		; 7+6+4+7=24
-			// total: 44+202+43+24+5=318  (till till play_all_13_6)
+			jr z,play_all_6_13		; 7+6+4+7=24
+			// total: 44+202+43+24+5=318  (till play_all_6_13)
 			ld b,#ff
-			jp play_by_mask_6_13		
-			//  total: 318-5+7+10=330 (play_by_mask_6_13)
+			jp play_by_mask_13_6
+			//  total: 318-5+7+10=330 (play_by_mask_13_6)
 
 play_all_0_5
 			cpl						; 0->ff
@@ -220,10 +220,10 @@ play_all_0_5_end
 			ld a, (hl)
 			inc hl					
 			add a
-			jr nz,play_by_mask_6_13	; 7+6+4+7=24
-			//  total: 296+24+5=325 (till play_by_mask_6_13)
-			//  total: 296+24=320 (till play_all_13_6)
-play_all_13_6
+			jr nz,play_by_mask_13_6	; 7+6+4+7=24
+			//  total: 296+24+5=325/318 (till play_by_mask_13_6)
+			//  total: 296+24=320/313 (till play_all_6_13)
+play_all_6_13
 			cpl						; 0->ff, keep flag c
 			jr	 c, 1f				; 4+7=11
 			dup 8
@@ -235,10 +235,10 @@ play_all_13_6
 1				
 			edup
 			ret						; 11+320+10=341
-			// total: 320 + 341 = 661 (all_0_5 + all_6_13)
-			// total: 318 + 341 = 659 (mask_0_5 + all_6_13)
+			// total: 313 + 341 = 654 (all_0_5 + all_6_13)
+			// total: 320 + 341 = 661 (mask_0_5 + all_6_13)
 
-play_by_mask_6_13
+play_by_mask_13_6
 			ld	d, 13
 			jr c,1f
 			out (c),d
@@ -264,7 +264,7 @@ play_by_mask_6_13
 			ld b,e
 			outi					
 			ret						; 4+5+4+12+4+16+10=55, 53+222+55 = 330
-			// total: 325 + 330 = 655 (all_0_5 + mask_6_13)
-			// total: 330 + 330 = 660 (mask_0_5 + mask_6_13)
+			// total: 318 + 330 = 648 (all_0_5 + mask_6_13)
+			// total: 325 + 330 = 655 (mask_0_5 + mask_6_13)
 
 			DISPLAY	"player code occupies ", /D, $-stop, " bytes"

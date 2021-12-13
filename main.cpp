@@ -785,24 +785,18 @@ private:
                 }
             }
         }
-#if 1
         if (flags & fastDepack)
         {
             if (maxChainLen > 1)
             {
-                const auto regs = symbolToRegs[ayFrames[chainPos]];
-                auto [firstRegs, secondRegs] = splitRegs(regs);
 
-                if (firstRegs >= 4 && secondRegs >= 5)
-                {
-                    if (secondRegs == 7 && regs.count(13) == 0)
-                        ;   //< ok for timings
-                    else
+                const auto regs = symbolToRegs[ayFrames[chainPos]];
+                int t = pl0xTimings(regs);
+                int overrun = (168 - 141) - (661 - t);
+                if (overrun > 0)
                     return std::tuple<int, int, int> { -1, -1, -1}; //< Long refs is slower
-                }
             }
         }
-#endif
 
         return std::tuple<int, int, int> { chainPos, maxChainLen, maxReducedLen};
     }
@@ -1092,7 +1086,7 @@ int main(int argc, char** argv)
         int totalTicks = 0;
         for (int i = 0; i < packer.timingsData.size(); ++i)
         {
-            if (packer.timingsData[i] > pos)
+            if (packer.timingsData[i] > t)
             {
                 pos = i;
                 t = packer.timingsData[i];
