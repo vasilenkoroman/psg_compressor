@@ -114,9 +114,8 @@ trb_rest	ld hl, 0
 pl1x		// Process ref	
 			inc hl
 			ld c, (hl)
-			add a
 			inc hl
-			jr nc, pl10					; 6+7+4+6+7=30t
+			jp p, pl10					; 6+7+6+10=29t
 
 pl11		ld a, (hl)						
 			ld (trb_rep+1), a		
@@ -129,7 +128,7 @@ pl11		ld a, (hl)
 			call pl0x
 			ld (pl_track+1), hl		
 			ret								; 11+7+4+17+16+10=65t
-			// total: 32+5+30+36+65=168t + pl0x time (661-30)=799t (max pl0x time is blocked here by packer)
+			// total: 32+5+29+36+65=167t + pl0x time (661-32)=796t (max pl0x time is blocked here by packer for level 1)
 
 pl00		sub 120						; 32+21+5=58 on enter
 			jr nc, pl_pause
@@ -157,7 +156,7 @@ pl10
 
 			ld a, (hl)
 			add a		            	; 16+8+11+7+4=46t
-			// total: 32+5+30+5+46=118t + pl0x time(661t) = 779t(max)
+			// total: 32+5+29+46=112t + pl0x time(661t) = 773t(max)
 
 pl0x		ld bc, #fffd				
 			add a					

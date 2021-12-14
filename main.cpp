@@ -89,7 +89,7 @@ public:
 
     static int delayTimings(TimingState state, int trbRep)
     {
-        int result = 0;    //< Timing on enter to pause
+        int result = 0;
         switch (state)
         {
             case TimingState::single:
@@ -213,14 +213,14 @@ public:
 
     static int shortRefTimings(const RegMap& regs)
     {
-        int result = 118;
+        int result = 112;
         result += TimingsHelper::pl0xTimings(regs);
         return result;
     }
 
     static int longRefInitTiming(const RegMap& regs)
     {
-        int result = 168;
+        int result = 167;
         result += TimingsHelper::pl0xTimings(regs);
         return result;
     }
