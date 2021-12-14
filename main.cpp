@@ -89,15 +89,16 @@ public:
 
     static int delayTimings(TimingState state, int trbRep)
     {
+        static const int kEnterToPause = 90;
         int result = 0;
         switch (state)
         {
             case TimingState::single:
-                result = 94 + 6 + 16 + 11 + 16;
+                result = kEnterToPause + 6 + 16 + 11 + 16;
                 result += trbRepTimings(trbRep);
                 break;
             case TimingState::first:
-                result = 94 + 41 + 84;
+                result = kEnterToPause + 41 + 84;
                 break;
             case TimingState::mid:
                 result = 12 + 10 + 11 + 11;
@@ -213,21 +214,21 @@ public:
 
     static int shortRefTimings(const RegMap& regs)
     {
-        int result = 112;
+        int result = 115;
         result += TimingsHelper::pl0xTimings(regs);
         return result;
     }
 
     static int longRefInitTiming(const RegMap& regs)
     {
-        int result = 167;
+        int result = 170;
         result += TimingsHelper::pl0xTimings(regs);
         return result;
     }
 
     static int frameTimings(const RegMap& regs, int trbRep)
     {
-        int result = 32; //< before pl_frame
+        int result = 28; //< before pl_frame
         result += pl0xTimings(regs);
         result += 33; //< before trb_rep
 

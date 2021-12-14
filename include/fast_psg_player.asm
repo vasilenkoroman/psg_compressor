@@ -2,7 +2,7 @@
 //psndcj//tbk - 11.02.2012,01.12.2013
 //source for sjasm cross-assembler
 //modified by physic 8.12.2021
-//Max time is reduced from 1089t to 802t (-287t)
+//Max time is reduced from 1089t to 799t (-290t)
 //Player size is increased from 348 to 442 bytes (+94 bytes)
 
 /*
@@ -63,7 +63,7 @@ saved_track
 			// total: 34+38=72t
 		
 // pause or end track
-pl_pause								; 94 on enter
+pl_pause								; 90 on enter
 			inc hl
 			ld (pl_track+1), hl
 			ret z
@@ -92,9 +92,8 @@ trb_play
 pl_track	ld hl, 0				
 
 			ld a, (hl)
-			ld b, a
 			add a
-			jr c, pl1x					    ; 10+7+4+4+7=32t
+			jr c, pl1x					    ; 10+7+4+7=28t
 
 pl_frame	call pl0x
 			ld (pl_track+1), hl				;17+16=33t
@@ -109,13 +108,14 @@ trb_rest	ld hl, 0
 			inc hl
 			ld (pl_track+1), hl
 			ret								; 10+6+16+10=42t
-			// total: 32+33+34+42=141t + pl0x time(661t) = 802t(max)
+			// total: 28+33+34+42=137t + pl0x time(661t) = 798t(max)
 
 pl1x		// Process ref	
+			ld b, (hl)
 			inc hl
 			ld c, (hl)
 			inc hl
-			jp p, pl10					; 6+7+6+10=29t
+			jp p, pl10					; 7+6+7+6+10=36t
 
 pl11		ld a, (hl)						
 			ld (trb_rep+1), a		
@@ -128,9 +128,9 @@ pl11		ld a, (hl)
 			call pl0x
 			ld (pl_track+1), hl		
 			ret								; 11+7+4+17+16+10=65t
-			// total: 32+5+29+36+65=167t + pl0x time (661-32)=796t (max pl0x time is blocked here by packer for level 1)
+			// total: 28+5+36+36+65=170t + pl0x time (661-32)=799t (max pl0x time is blocked here by packer for level 1)
 
-pl00		sub 120						; 32+21+5=58 on enter
+pl00		sub 120						; 28+17+21+5=71 on enter
 			jr nc, pl_pause
 			ld de, #ffbf
 		//psg1
@@ -156,7 +156,7 @@ pl10
 
 			ld a, (hl)
 			add a		            	; 16+8+11+7+4=46t
-			// total: 32+5+29+46=112t + pl0x time(661t) = 773t(max)
+			// total: 28+5+36+46=115t + pl0x time(661t) = 776t(max)
 
 pl0x		ld bc, #fffd				
 			add a					
