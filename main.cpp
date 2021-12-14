@@ -92,20 +92,22 @@ public:
         int result = 0;    //< Timing on enter to pause
         switch (state)
         {
-        case TimingState::single:
-            result = 94 + 6 + 16 + 11;
-            return result;
-        case TimingState::first:
-            result = 94 + 41 + 84;
-            return result;
-        case TimingState::mid:
-            result = 12 + 10 + 11 + 11;
-            return result;
-        case TimingState::last:
-            result = 12 + 26 + 38;
-            result += trbRepTimings(trbRep);
-
+            case TimingState::single:
+                result = 94 + 6 + 16 + 11 + 16;
+                result += trbRepTimings(trbRep);
+                break;
+            case TimingState::first:
+                result = 94 + 41 + 84;
+                break;
+            case TimingState::mid:
+                result = 12 + 10 + 11 + 11;
+                break;
+            case TimingState::last:
+                result = 12 + 26 + 38;
+                result += trbRepTimings(trbRep);
+                break;
         }
+        return result;
     }
 
     static int play_all_6_13(const RegMap& regs)
@@ -661,6 +663,7 @@ private:
         }
 
         timingsData.push_back(longRefInitTiming(pos)); // First frame
+        --reducedLen;
         for (int j = 1; j < len; ++j)
         {
             ++pos;
