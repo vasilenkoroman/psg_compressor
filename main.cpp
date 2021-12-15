@@ -1134,7 +1134,7 @@ int main(int argc, char** argv)
     if (argc < 3)
     {
         std::cout << "Usage: psg_pack [OPTION] input_file output_file" << std::endl;
-        std::cout << "Example: psg_pack --level 1 file1.psg packetd.mus" << std::endl;
+        std::cout << "Example: psg_pack --level 1 file1.psg packet.mus" << std::endl;
         std::cout << "Default options: --fast --clean" << std::endl;
         std::cout << "" << std::endl;
         std::cout << "Options:" << std::endl;
