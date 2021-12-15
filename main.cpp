@@ -11,6 +11,7 @@
 static const uint8_t kEndTrackMarker = 0x3f;
 static const int kMaxDelay = 33;
 static const int kMaxRefOffset = 16384;
+static const int kPsg1iSize = 16;
 
 enum Flags
 {
@@ -62,11 +63,6 @@ auto splitRegs(const RegMap& regs)
             ++secondRegs;
     }
     return std::tuple<int, int>(firstRegs, secondRegs);
-}
-
-bool isPsg2(const RegMap& regs)
-{
-    return regs.size() > 2;
 }
 
 class TimingsHelper
@@ -276,6 +272,10 @@ public:
         int unusedEnvelope = 0;
         int unusedEnvForm = 0;
         int unusedNoise = 0;
+        
+        std::map<int, int> psg1SymbolToUsage;
+        std::multimap<int, int> psg1UsageToSymbol;
+        //std::array<RegMap, kPsg1iSize> psg1i;
     };
 
 
@@ -536,6 +536,12 @@ private:
         uint16_t symbol = toSymbol(changedRegs);
         ayFrames.push_back({ symbol, lastCleanedRegs, changedRegs }); //< Flush previous frame.
 
+        if (changedRegs.size() == 2)
+        {
+            // Gather long PSG1 stats
+            ++stats.psg1[symbol];
+        }
+
         changedRegs.clear();
         return true;
     }
@@ -688,6 +694,13 @@ private:
         }
     }
 
+    bool isPsg2(const RegMap& regs, uint16_t symbol)
+    {
+        if (regs.size() == 2)
+            return stats.psg1SymbolToUsage.count(symbol) == 0;
+        return regs.size() > 1;
+    }
+
     void serializeFrame(uint16_t pos)
     {
         int prevSize = compressedData.size();
@@ -697,7 +710,7 @@ private:
 
         timingsData.push_back(TimingsHelper::frameTimings(regs, 0));
 
-        bool usePsg2 = isPsg2(regs);
+        bool usePsg2 = isPsg2(regs, symbol);
 
         uint8_t header1 = 0;
         if (usePsg2)
@@ -743,12 +756,21 @@ private:
         }
         else
         {
-            header1 = regs.size() == 1 ? 0x10 : 0;
-            for (const auto& reg : regs)
+            auto itr = stats.psg1SymbolToUsage.count(symbol);
+            if (itr != stats.psg1SymbolToUsage.end())
             {
-                compressedData.push_back(reg.first + header1);
-                compressedData.push_back(reg.second); // reg value
-                header1 = 0;
+                // PSG1i
+                compressedData.push_back(std::distance(itr, stats.psg1SymbolToUsage.begin()));
+            }
+            else
+            {
+                header1 = regs.size() == 1 ? 0x10 : 0;
+                for (const auto& reg : regs)
+                {
+                    compressedData.push_back(reg.first + header1);
+                    compressedData.push_back(reg.second); // reg value
+                    header1 = 0;
+                }
             }
         }
 
@@ -765,6 +787,13 @@ private:
         auto regs = symbolToRegs[symbol];
         if (isPsg2(regs))
             return 2 + regs.size();
+
+        if (stats.psg1.count(symbol))
+        {
+            // PSG1i
+            return 1;
+        }
+
         return regs.size() * 2;
     };
 
@@ -944,6 +973,14 @@ public:
                 ++delayCounter; //< Regs were cleaned up.
         }
         writeDelay(delayCounter);
+
+        for (const auto& v : stats.psg1)
+            stats.psg1Usage.emplace(v.second, v.first);
+        while (stats.psg1Usage.size() > kPsg1iSize)
+            stats.psg1Usage.erase(stats.psg1Usage.begin());
+        stats.psg1.clear();
+        for (const auto& v : stats.psg1Usage)
+            stats.psg1[v.second] = v.first;
 
         return 0;
     }
