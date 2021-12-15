@@ -14,8 +14,12 @@
 00111100..00011110          1	PAUSE32 - пауза pppp+1 (1..32, N + 120)
 00111111					1	маркер окончания трека
 
-0001hhhh vvvvvvvv			2	PSG1 проигрывание, 1 register, 0000hhhh - номер регистра, vvvvvvvv - значение
-0000hhhh vvvvvvvv			4	PSG1 проигрывание, 2 registers, 0000hhhh - номер регистра, vvvvvvvv - значение
+000hhhh0 vvvvvvvv			1	PSG1 проигрывание, 1 register, 0000hhhh - номер регистра, vvvvvvvv - значение
+000hhhh1 vvvvvvvv			1	PSG1 проигрывание, 2 registers, 0000hhhh - номер регистра, vvvvvvvv - значение
+
+00111101					1   Not used.
+00111110					1   Not used.
+
 
 Также эта версия частично поддерживает короткие вложенные ссылки уровня 2 (доп. ограничение - они не могут стоять в конце длинной ссылки уровня 1).
 По-умолчанию пакер избегает пакованных фреймов, когда заполнены 5/6 регистров [0..5] или 5/7, 6/7 регистров [6..12]. В этом случае записывается "лишний" регистр(ы).
@@ -142,9 +146,8 @@ pl00		sub 120						; 28+17+21+5=71 on enter
 			// 2 registr - maximum, second without check
 			ld a, (hl)
 			inc hl
-			sub #10
-			jr nc, 7f					; 7+7+10+7+7+7=45
-
+			rrca
+			jr nc, 7f					; 7+7+7+6+4+7=38
 			ex de, hl
 			add	 a
 			add	 a
@@ -152,23 +155,23 @@ mus_low		add	 0
 			ld	 l, a
 mus_high	adc	 0
 			sub	 l
-			ld	 h, a
+			ld	 h, a					; 4+4+4+7+4+7+4+4=38
 
 			outi
 			ld b, #bf
 			outi
-			 
 			ld b, #ff
 			outi
 			ld b, #bf
 			outi
 			ex	 de, hl
-			ret
-
+			ret							; 16+(7+16)*3+4+10=99
+			; total: 38+38+99=175
 7			out (c),a
 			ld b, #bf
 			outi
-			ret							; 45+16+4+16+7+6+4+12+4+16+10=140t
+			ret							; 12+7+16+10=45
+			; total: 38+5+45=88
 
 pl10
 			ld (pl_track+1), hl		

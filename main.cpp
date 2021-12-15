@@ -93,6 +93,7 @@ struct Stats
 
     std::map<int, int> psg1SymbolToUsage;
     std::multimap<int, int> psg1UsageToSymbol;
+    std::map<int, int> psg1SymbolIndex;
     //std::array<RegMap, kPsg1iSize> psg1i;
 };
 
@@ -194,12 +195,12 @@ public:
         return result;
     }
 
-    int pl00TimeForFrame(const RegMap& regs)
+    int pl00TimeForFrame(const RegMap& regs, uint16_t symbol)
     {
-        int result = 140;
-        if (regs.size() == 1)
-            result += -(16 + 4 + 16 + 7) + 5;
-        return result;
+        if (m_stats.psg1SymbolToUsage.count(symbol) > 0)
+            return 175;
+        else
+            return 88;
     }
 
     int pl0xTimings(const RegMap& regs, uint16_t symbol)
@@ -210,7 +211,7 @@ public:
             --secondRegsExcept13;
         bool psg2 = isPsg2(regs, symbol, m_stats);
         if (!psg2)
-            return 21 + 5 + pl00TimeForFrame(regs);
+            return 21 + 5 + pl00TimeForFrame(regs, symbol);
 
         // PSG2 timings
         int result = 44; //< Till jump to play_all_0_5
@@ -762,18 +763,18 @@ private:
         }
         else
         {
-            const auto itr = stats.psg1SymbolToUsage.find(symbol);
-            if (itr != stats.psg1SymbolToUsage.cend())
+            const auto itr = stats.psg1SymbolIndex.find(symbol);
+            if (itr != stats.psg1SymbolIndex.cend())
             {
                 // PSG1i
-                compressedData.push_back(std::distance(itr, stats.psg1SymbolToUsage.begin()));
+                compressedData.push_back((itr->second << 1) + 1);
             }
             else
             {
-                header1 = regs.size() == 1 ? 0x10 : 0;
+                assert(regs.size() == 1);
                 for (const auto& reg : regs)
                 {
-                    compressedData.push_back(reg.first + header1);
+                    compressedData.push_back(reg.first << 1);
                     compressedData.push_back(reg.second); // reg value
                     header1 = 0;
                 }
@@ -986,8 +987,12 @@ public:
         while (stats.psg1UsageToSymbol.size() > kPsg1iSize)
             stats.psg1UsageToSymbol.erase(stats.psg1UsageToSymbol.begin());
         stats.psg1SymbolToUsage.clear();
+        int i = 0;
         for (const auto& v : stats.psg1UsageToSymbol)
+        {
             stats.psg1SymbolToUsage[v.second] = v.first;
+            stats.psg1SymbolIndex[v.second] = i++;
+        }
 
         return 0;
     }
@@ -1004,14 +1009,16 @@ public:
             return -1;
         }
 
-        for (const auto& value : stats.psg1SymbolToUsage)
+        compressedData.resize(stats.psg1SymbolIndex.size() * 4);
+        for (const auto& value : stats.psg1SymbolIndex)
         {
             auto regs = symbolToRegs[value.first];
             assert(regs.size() == 2);
-            for (const auto& reg : regs)
+            int offset = value.second * 4;
+            for (const auto& reg: regs)
             {
-                compressedData.push_back(reg.first);
-                compressedData.push_back(reg.second);
+                compressedData[offset++] = reg.first;
+                compressedData[offset++] = reg.second;
             }
         }
 
@@ -1123,7 +1130,7 @@ int main(int argc, char** argv)
 {
     PgsPacker packer;
 
-    std::cout << "Fast PSG packer v.0.6a" << std::endl;
+    std::cout << "Fast PSG packer v.0.7b" << std::endl;
     if (argc < 3)
     {
         std::cout << "Usage: psg_pack [OPTION] input_file output_file" << std::endl;
@@ -1133,9 +1140,9 @@ int main(int argc, char** argv)
         std::cout << "Options:" << std::endl;
         std::cout << "-l, --level\t Compression level:" << std::endl;
 
-        std::cout << "\t0\tMaximum speed. Max frame time=802t" << std::endl;
+        std::cout << "\t0\tMaximum speed. Max frame time=799t" << std::endl;
         std::cout << "\t1\tSame max frame time, avarage frame size worse a little bit, better compression" << std::endl;
-        std::cout << "\t2\tMax frame time about 828t, better compression" << std::endl;
+        std::cout << "\t2\tMax frame time about 827t, better compression" << std::endl;
         std::cout << "\t3\tMax frame time above 900t, better compression" << std::endl;
         std::cout << "\t4\tMax frame time above 1000t, signitifally better compression. Requires 'slow_psg_player.asm'" << std::endl;
 
