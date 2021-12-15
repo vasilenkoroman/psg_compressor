@@ -65,10 +65,52 @@ auto splitRegs(const RegMap& regs)
     return std::tuple<int, int>(firstRegs, secondRegs);
 }
 
+struct Stats
+{
+    int psgFrames = 0;
+    int emptyCnt = 0;
+    int emptyFrames = 0;
+
+    int singleRepeat = 0;
+    int allRepeat = 0;
+    int allRepeatFrames = 0;
+
+    int ownCnt = 0;
+    int ownBytes = 0;
+
+    std::map<int, int> frameRegs;
+    std::map<int, int> regsChange;
+
+    std::map<int, int> firstHalfRegs;
+    std::map<int, int> secondHalfRegs;
+
+    int unusedToneA = 0;
+    int unusedToneB = 0;
+    int unusedToneC = 0;
+    int unusedEnvelope = 0;
+    int unusedEnvForm = 0;
+    int unusedNoise = 0;
+
+    std::map<int, int> psg1SymbolToUsage;
+    std::multimap<int, int> psg1UsageToSymbol;
+    //std::array<RegMap, kPsg1iSize> psg1i;
+};
+
+bool isPsg2(const RegMap& regs, uint16_t symbol, const Stats& stats)
+{
+    if (regs.size() == 2)
+        return stats.psg1SymbolToUsage.count(symbol) == 0;
+    return regs.size() > 1;
+}
+
 class TimingsHelper
 {
+private:
+    const Stats& m_stats;
 public:
-    static int trbRepTimings(int trdRep)
+    TimingsHelper(const Stats& stats) : m_stats(stats) {}
+
+    int trbRepTimings(int trdRep)
     {
         if (trdRep == 0)
             return 7 + 4 + 11;
@@ -83,7 +125,7 @@ public:
         return result;
     }
 
-    static int delayTimings(TimingState state, int trbRep)
+    int delayTimings(TimingState state, int trbRep)
     {
         static const int kEnterToPause = 90;
         int result = 0;
@@ -152,7 +194,7 @@ public:
         return result;
     }
 
-    static int pl00TimeForFrame(const RegMap& regs)
+    int pl00TimeForFrame(const RegMap& regs)
     {
         int result = 140;
         if (regs.size() == 1)
@@ -160,13 +202,13 @@ public:
         return result;
     }
 
-    static int pl0xTimings(const RegMap& regs)
+    int pl0xTimings(const RegMap& regs, uint16_t symbol)
     {
         const auto [firstRegs, secondRegs] = splitRegs(regs);
         int secondRegsExcept13 = secondRegs;
         if (regs.count(13) == 1)
             --secondRegsExcept13;
-        bool psg2 = isPsg2(regs);
+        bool psg2 = isPsg2(regs, symbol, m_stats);
         if (!psg2)
             return 21 + 5 + pl00TimeForFrame(regs);
 
@@ -208,24 +250,24 @@ public:
         return result;
     }
 
-    static int shortRefTimings(const RegMap& regs)
+    int shortRefTimings(const RegMap& regs, uint16_t symbol)
     {
         int result = 115;
-        result += TimingsHelper::pl0xTimings(regs);
+        result += TimingsHelper::pl0xTimings(regs, symbol);
         return result;
     }
 
-    static int longRefInitTiming(const RegMap& regs)
+    int longRefInitTiming(const RegMap& regs, uint16_t symbol)
     {
         int result = 170;
-        result += TimingsHelper::pl0xTimings(regs);
+        result += TimingsHelper::pl0xTimings(regs, symbol);
         return result;
     }
 
-    static int frameTimings(const RegMap& regs, int trbRep)
+    int frameTimings(const RegMap& regs, int trbRep, uint16_t symbol)
     {
         int result = 28; //< before pl_frame
-        result += pl0xTimings(regs);
+        result += pl0xTimings(regs, symbol);
         result += 33; //< before trb_rep
 
         if (trbRep == 0)
@@ -247,37 +289,7 @@ class PgsPacker
 {
 public:
 
-    struct Stats
-    {
-        int psgFrames = 0;
-        int emptyCnt = 0;
-        int emptyFrames = 0;
-
-        int singleRepeat = 0;
-        int allRepeat = 0;
-        int allRepeatFrames = 0;
-
-        int ownCnt = 0;
-        int ownBytes = 0;
-
-        std::map<int, int> frameRegs;
-        std::map<int, int> regsChange;
-
-        std::map<int, int> firstHalfRegs;
-        std::map<int, int> secondHalfRegs;
-
-        int unusedToneA = 0;
-        int unusedToneB = 0;
-        int unusedToneC = 0;
-        int unusedEnvelope = 0;
-        int unusedEnvForm = 0;
-        int unusedNoise = 0;
-        
-        std::map<int, int> psg1SymbolToUsage;
-        std::multimap<int, int> psg1UsageToSymbol;
-        //std::array<RegMap, kPsg1iSize> psg1i;
-    };
-
+    PgsPacker(): th(stats) {}
 
     struct FrameInfo
     {
@@ -301,6 +313,7 @@ public:
     RegVector prevNoisePeriod;
 
     Stats stats;
+    TimingsHelper th;
 
     std::vector<uint8_t> srcPsgData;
     std::vector<uint8_t> updatedPsgData;
@@ -539,7 +552,7 @@ private:
         if (changedRegs.size() == 2)
         {
             // Gather long PSG1 stats
-            ++stats.psg1[symbol];
+            ++stats.psg1SymbolToUsage[symbol];
         }
 
         changedRegs.clear();
@@ -566,14 +579,14 @@ private:
     {
         if (count == 1)
         {
-            timingsData.push_back(TimingsHelper::delayTimings(TimingState::single, trbRep));
+            timingsData.push_back(th.delayTimings(TimingState::single, trbRep));
         }
         else
         {
-            timingsData.push_back(TimingsHelper::delayTimings(TimingState::first, trbRep));
+            timingsData.push_back(th.delayTimings(TimingState::first, trbRep));
             for (int i = 1; i < count - 1; ++i)
-                timingsData.push_back(TimingsHelper::delayTimings(TimingState::mid, trbRep));
-            timingsData.push_back(TimingsHelper::delayTimings(TimingState::last, trbRep));
+                timingsData.push_back(th.delayTimings(TimingState::mid, trbRep));
+            timingsData.push_back(th.delayTimings(TimingState::last, trbRep));
         }
     }
 
@@ -645,14 +658,14 @@ private:
         auto symbol = ayFrames[pos].symbol;
         auto regs = symbolToRegs[symbol];
 
-        return TimingsHelper::shortRefTimings(regs);
+        return th.shortRefTimings(regs, symbol);
     }
 
     int longRefInitTiming(int pos)
     {
         auto symbol = ayFrames[pos].symbol;
         auto regs = symbolToRegs[symbol];
-        return TimingsHelper::longRefInitTiming(regs);
+        return th.longRefInitTiming(regs, symbol);
     }
 
     bool isNestedShortRef(int pos)
@@ -687,18 +700,11 @@ private:
             else
             {
                 auto regs = symbolToRegs[symbol];
-                int result = TimingsHelper::frameTimings(regs, reducedLen);
+                int result = th.frameTimings(regs, reducedLen, symbol);
                 timingsData.push_back(result);
                 --reducedLen;
             }
         }
-    }
-
-    bool isPsg2(const RegMap& regs, uint16_t symbol)
-    {
-        if (regs.size() == 2)
-            return stats.psg1SymbolToUsage.count(symbol) == 0;
-        return regs.size() > 1;
     }
 
     void serializeFrame(uint16_t pos)
@@ -708,9 +714,9 @@ private:
         uint16_t symbol = ayFrames[pos].symbol;
         auto regs = symbolToRegs[symbol];
 
-        timingsData.push_back(TimingsHelper::frameTimings(regs, 0));
+        timingsData.push_back(th.frameTimings(regs, 0, symbol));
 
-        bool usePsg2 = isPsg2(regs, symbol);
+        bool usePsg2 = isPsg2(regs, symbol, stats);
 
         uint8_t header1 = 0;
         if (usePsg2)
@@ -756,8 +762,8 @@ private:
         }
         else
         {
-            auto itr = stats.psg1SymbolToUsage.count(symbol);
-            if (itr != stats.psg1SymbolToUsage.end())
+            const auto itr = stats.psg1SymbolToUsage.find(symbol);
+            if (itr != stats.psg1SymbolToUsage.cend())
             {
                 // PSG1i
                 compressedData.push_back(std::distance(itr, stats.psg1SymbolToUsage.begin()));
@@ -785,10 +791,10 @@ private:
             return 1;
 
         auto regs = symbolToRegs[symbol];
-        if (isPsg2(regs))
+        if (isPsg2(regs, symbol, stats))
             return 2 + regs.size();
 
-        if (stats.psg1.count(symbol))
+        if (stats.psg1SymbolToUsage.count(symbol))
         {
             // PSG1i
             return 1;
@@ -881,8 +887,9 @@ private:
             if (maxChainLen > 1)
             {
 
-                const auto regs = symbolToRegs[ayFrames[chainPos].symbol];
-                int t = TimingsHelper::pl0xTimings(regs);
+                const auto symbol = ayFrames[chainPos].symbol;
+                const auto regs = symbolToRegs[symbol];
+                int t = th.pl0xTimings(regs, symbol);
                 int overrun = (168 - 141) - (661 - t);
                 if (overrun > 0)
                     return std::tuple<int, int, int> { -1, -1, -1}; //< Long refs is slower
@@ -974,13 +981,13 @@ public:
         }
         writeDelay(delayCounter);
 
-        for (const auto& v : stats.psg1)
-            stats.psg1Usage.emplace(v.second, v.first);
-        while (stats.psg1Usage.size() > kPsg1iSize)
-            stats.psg1Usage.erase(stats.psg1Usage.begin());
-        stats.psg1.clear();
-        for (const auto& v : stats.psg1Usage)
-            stats.psg1[v.second] = v.first;
+        for (const auto& v : stats.psg1SymbolToUsage)
+            stats.psg1UsageToSymbol.emplace(v.second, v.first);
+        while (stats.psg1UsageToSymbol.size() > kPsg1iSize)
+            stats.psg1UsageToSymbol.erase(stats.psg1UsageToSymbol.begin());
+        stats.psg1SymbolToUsage.clear();
+        for (const auto& v : stats.psg1UsageToSymbol)
+            stats.psg1SymbolToUsage[v.second] = v.first;
 
         return 0;
     }
@@ -997,6 +1004,16 @@ public:
             return -1;
         }
 
+        for (const auto& value : stats.psg1SymbolToUsage)
+        {
+            auto regs = symbolToRegs[value.first];
+            assert(regs.size() == 2);
+            for (const auto& reg : regs)
+            {
+                compressedData.push_back(reg.first);
+                compressedData.push_back(reg.second);
+            }
+        }
 
         // compressData
         refCount.resize(ayFrames.size());

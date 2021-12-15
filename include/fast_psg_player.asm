@@ -42,7 +42,13 @@ stop		ld c,#fd
 			jr nz,1b
 			ret
 		
-mus_init	ld hl, music+48
+mus_init	ld hl, music
+			ld	 a, l
+			ld	 (mus_low+1), a
+			ld	 a, h
+			ld	 (mus_high+1), a
+			ld	de, 16*4
+			add	 hl, de
 			ld (pl_track+1), hl
 			xor a
 			ld (trb_rep+1), a
@@ -136,46 +142,30 @@ pl00		sub 120						; 28+17+21+5=71 on enter
 			// 2 registr - maximum, second without check
 			ld a, (hl)
 			inc hl
-
 			sub #10
-			exx	 // save hl
+			jr nc, 7f					; 7+7+10+7+7+7=45
 
-			jr nc, psg1_1					; 7+7+10+7+7+7=45
-
-			// 2 PSG1 regs via index mask
-			exx
-			ld	l, a
+			ex de, hl
 			add	 a
-			add	 l
-
-			add	 low(music)
+			add	 a
+mus_low		add	 0
 			ld	 l, a
-			adc	 high(music)
+mus_high	adc	 0
 			sub	 l
-			ld	 h, a	; 4*5=20
+			ld	 h, a
 
-			ld	 a, (hl) // reg1, reg2
-			inc	 hl
-			ld	 e, a
-			and	 #0f
-
-			ld bc, #fffd
-			out (c),a
+			outi
 			ld b, #bf
 			outi
-
-			xor	e
-			rra: rra: rra: rra
+			 
 			ld b, #ff
-			out (c),a
+			outi
 			ld b, #bf
 			outi
-			exx
-			ret							; 4+10+4+4+11+7+6+4+7+10+4+12+4+16+4+4*4+4+12+4+16+4+10=173
-										; 21+5+45+173=244
-psg1_1
-			ld bc, #fffd
-			out (c),a
+			ex	 de, hl
+			ret
+
+7			out (c),a
 			ld b, #bf
 			outi
 			ret							; 45+16+4+16+7+6+4+12+4+16+10=140t
