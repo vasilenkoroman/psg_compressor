@@ -967,7 +967,11 @@ public:
                 writeDelay(delayCounter - 1);
                 delayCounter = 0;
 
-                assert(value <= 13);
+                if (value > 13)
+                {
+                    std::cerr << "Invalid register number '" << (int) value << "' at pos " << pos - srcPsgData.data() << ". Make sure input file is a PSG file." << std::endl;
+                    return -1;
+                }
                 changedRegs[value] = pos[1];
                 lastOrigRegs[value] = pos[1];
                 ++stats.regsChange[value];
