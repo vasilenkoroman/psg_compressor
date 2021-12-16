@@ -867,7 +867,7 @@ private:
                     serializedSize += serializedFrameSize(pos + j);
                     sizes.push_back(serializedSize);
                 }
-                while (refCount[i + chainLen - 1] == 1)
+                while (refCount[i + chainLen - 1] >= 1)
                 {
                     sizes.pop_back();
                     --chainLen;
