@@ -3,7 +3,7 @@
 //source for sjasm cross-assembler
 //modified by physic 8.12.2021
 //Max time is reduced from 1089t to 799t (-290t)
-//Player size is increased from 348 to 442 bytes (+94 bytes)
+//Player size is increased from 348 to 470 bytes (+122 bytes)
 
 /*
 11hhhhhh llllllll nnnnnnnn	3	CALL_N - вызов с возвратом для проигрывания (nnnnnnnn + 1) значений по адресу 11hhhhhh llllllll
