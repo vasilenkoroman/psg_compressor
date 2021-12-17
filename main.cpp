@@ -877,11 +877,6 @@ private:
                     serializedSize += serializedFrameSize(pos + j);
                     sizes.push_back(serializedSize);
                 }
-                while (chainLen > 0 &&  refCount[i + chainLen - 1].refLen == 1)
-                {
-                    sizes.pop_back();
-                    --chainLen;
-                }
 
                 bool truncateLastRef2 = false;
                 while (chainLen > 0 && refCount[i + chainLen - 1].refLen > 1 
@@ -894,13 +889,11 @@ private:
                 if (truncateLastRef2)
                     --reducedLen;
 
-#if 0
-                while (chainLen > 0 && ayFrames[i + chainLen - 1].symbol <= kMaxDelay)
+                while (chainLen > 0 && refCount[i + chainLen - 1].refLen == 1)
                 {
                     sizes.pop_back();
                     --chainLen;
                 }
-#endif
 
 
                 int benifit = *sizes.rbegin() - (chainLen == 1 ? 2 : 3);
