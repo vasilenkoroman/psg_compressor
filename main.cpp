@@ -318,8 +318,9 @@ public:
 
     struct RefInfo
     {
+        int refTo = 0;
         int refLen = 0;
-        int offsetInRef = 0;
+        int level = 0;
     };
 
     std::vector<uint8_t> srcPsgData;
@@ -869,7 +870,7 @@ private:
                         break;
                     ++chainLen;
                     const auto& ref = refCount[i + j];
-                    if (ref.refLen == 0  || (ref.refLen > 1 && ref.offsetInRef == 0))
+                    if (ref.refLen == 0  || (ref.refLen > 1 && ref.refTo != 0))
                     {
                         ++reducedLen; //< Don't count 1-symbol refs during ref serialization
                     }
@@ -879,6 +880,29 @@ private:
                 }
 
                 bool truncateLastRef2 = false;
+
+                int lastIndex = i + chainLen - 1;
+                int index = lastIndex;
+                for (; chainLen > 0 && refCount[index].refLen > 1 && refCount[index].refTo == 0; --index);
+                if (index < lastIndex)
+                {
+                    int validLastIndex = index + refCount[index].refLen - 1;
+                    if (validLastIndex > lastIndex)
+                    {
+                        for (int j = 0; j < lastIndex - index; ++j)
+                        {
+                            sizes.pop_back();
+                            --chainLen;
+                        }
+                        truncateLastRef2 = true;
+                    }
+                    else
+                    {
+                        int gg = 4;
+                    }
+                }
+
+#if 0
                 while (chainLen > 0 && refCount[i + chainLen - 1].refLen > 1 
                     && refCount[i + chainLen - 1].offsetInRef < refCount[i + chainLen - 1].refLen-1)
                 {
@@ -886,6 +910,7 @@ private:
                     --chainLen;
                     truncateLastRef2 = true;
                 }
+#endif
                 if (truncateLastRef2)
                     --reducedLen;
 
@@ -894,7 +919,6 @@ private:
                     sizes.pop_back();
                     --chainLen;
                 }
-
 
                 int benifit = *sizes.rbegin() - (chainLen == 1 ? 2 : 3);
                 if (benifit > bestBenifit)
@@ -924,6 +948,30 @@ private:
     }
 
 public:
+
+    void updateRefInfo(int i, int pos, int len)
+    {
+        refCount[i].refTo = pos;
+        for (int j = i; j < i + len; ++j)
+        {
+            assert(refCount[j].refLen == 0);
+            refCount[j].refLen = len;
+        }
+        if (len > 1)
+            updateNestedLevel(pos, len, 1);
+    }
+
+    void updateNestedLevel(int pos, int len, int level)
+    {
+        for (int j = pos; j < pos + len; ++j)
+            refCount[j].level = std::max(refCount[j].level, level);
+        for (int j = pos; j < pos + len; ++j)
+        {
+            if (refCount[j].refTo && refCount[j].refLen > 1)
+                updateNestedLevel(refCount[j].refTo, refCount[j].refLen, level+1);
+        }
+    }
+
     int parsePsg(const std::string& inputFileName)
     {
         using namespace std;
@@ -1069,12 +1117,7 @@ public:
                 {
                     serializeRef(pos, len, reducedLen);
 
-                    for (int j = i; j < i + len; ++j)
-                    {
-                        assert(refCount[j].refLen == 0);
-                        refCount[j].refLen = len;
-                        refCount[j].offsetInRef = j - i;
-                    }
+                    updateRefInfo(i, pos, len);
 
                     i += len;
                     if (len == 1)
@@ -1141,6 +1184,14 @@ public:
 
         return 0;
     }
+
+    int maxNestedLevel() const 
+    {
+        int result = 0;
+        for (const auto& ref : refCount)
+            result = std::max(result, ref.level);
+        return result;
+    }       
 
 };
 
@@ -1237,10 +1288,12 @@ int main(int argc, char** argv)
     std::cout << "Packed size:\t" << packer.compressedData.size() << std::endl;
     std::cout << "1-byte refs:\t" << packer.stats.singleRepeat << std::endl;
     std::cout << "Total refs:\t" << packer.stats.allRepeat << std::endl;
-    std::cout << "Total frames:\t" << packer.ayFrames.size() << std::endl;
-    std::cout << "Ref frames:\t" << packer.stats.allRepeatFrames << std::endl;
+    std::cout << "Packed frames:\t" << packer.ayFrames.size() << std::endl;
     std::cout << "Empty frames:\t" << packer.stats.emptyCnt << std::endl;
-    std::cout << "Frames:\t\t" << packer.stats.psgFrames << std::endl;
+    std::cout << "Frames in refs:\t" << packer.stats.allRepeatFrames << std::endl;
+    std::cout << "Total frames:\t" << packer.stats.psgFrames << std::endl;
+    if (packer.level >= 4)
+        std::cout << "Nested level:\t" << packer.maxNestedLevel() << std::endl;
     
 
     int pos = 0;
@@ -1258,7 +1311,7 @@ int main(int argc, char** argv)
 
     std::string comment;
     if (packer.level == CompressionLevel::l4)
-        comment = " (+ nested ref timings, not implemented yet)";
+        comment = " (+ nested ref timings, not calculated yet)";
     std::cout << "The longest frame: " << t << "t" << comment << ", pos " << pos << ". Avarage frame: " << totalTicks / (packer.timingsData.size()) << "t" << std::endl;
 
     return 0;
