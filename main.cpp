@@ -316,10 +316,16 @@ public:
     Stats stats;
     TimingsHelper th;
 
+    struct RefInfo
+    {
+        int refLen = 0;
+        int offsetInRef = 0;
+    };
+
     std::vector<uint8_t> srcPsgData;
     std::vector<uint8_t> updatedPsgData;
     std::vector<uint8_t> compressedData;
-    std::vector<int> refCount;
+    std::vector<RefInfo> refCount;
     std::vector<int> frameOffsets;
     int flags = kDefaultFlags;
     bool firstFrame = false;
@@ -843,36 +849,56 @@ private:
         int bestBenifit = 0;
         int maxReducedLen = -1;
 
+        int maxAllowedReducedLen = level < l4 ? 128 : 128;
+
         for (int i = 0; i < pos; ++i)
         {
             if (frameOffsets[pos] - frameOffsets[i] + 3 > kMaxRefOffset)
                 continue;
 
-            if (isFrameCover(ayFrames[i], ayFrames[pos]) && refCount[i] == 0)
+            if (isFrameCover(ayFrames[i], ayFrames[pos]) && refCount[i].refLen == 0)
             {
                 int chainLen = 0;
                 int reducedLen = 0;
                 int serializedSize = 0;
                 std::vector<int> sizes;
                 
-                for (int j = 0; j < maxLength && i + j < pos && reducedLen < 128; ++j)
+                for (int j = 0; j < maxLength && i + j < pos && reducedLen < maxAllowedReducedLen; ++j)
                 {
-                    if ((refCount[i + j] > 1 && level < l4) || !isFrameCover(ayFrames[i + j], ayFrames[pos + j]))
+                    if ((refCount[i + j].refLen > 1 && level < l4) || !isFrameCover(ayFrames[i + j], ayFrames[pos + j]))
                         break;
                     ++chainLen;
-                    if (refCount[i + j] == 0)
+                    const auto& ref = refCount[i + j];
+                    if (ref.refLen == 0  || (ref.refLen > 1 && ref.offsetInRef == 0))
                     {
                         ++reducedLen; //< Don't count 1-symbol refs during ref serialization
                     }
+
                     serializedSize += serializedFrameSize(pos + j);
                     sizes.push_back(serializedSize);
                 }
-                while (refCount[i + chainLen - 1] >= 1)
+                while (chainLen > 0 &&  refCount[i + chainLen - 1].refLen == 1)
                 {
                     sizes.pop_back();
                     --chainLen;
                 }
-                   
+
+                while (chainLen > 0 && refCount[i + chainLen - 1].refLen > 1 
+                    && refCount[i + chainLen - 1].offsetInRef < refCount[i + chainLen - 1].refLen-1)
+                {
+                    sizes.pop_back();
+                    --chainLen;
+                }
+
+#if 0
+                while (chainLen > 0 && ayFrames[i + chainLen - 1].symbol <= kMaxDelay)
+                {
+                    sizes.pop_back();
+                    --chainLen;
+                }
+#endif
+
+
                 int benifit = *sizes.rbegin() - (chainLen == 1 ? 2 : 3);
                 if (benifit > bestBenifit)
                 {
@@ -967,11 +993,7 @@ public:
                 writeDelay(delayCounter - 1);
                 delayCounter = 0;
 
-                if (value > 13)
-                {
-                    std::cerr << "Invalid register number '" << (int) value << "' at pos " << pos - srcPsgData.data() << ". Make sure input file is a PSG file." << std::endl;
-                    return -1;
-                }
+                assert(value <= 13);
                 changedRegs[value] = pos[1];
                 lastOrigRegs[value] = pos[1];
                 ++stats.regsChange[value];
@@ -1051,7 +1073,11 @@ public:
                     serializeRef(pos, len, reducedLen);
 
                     for (int j = i; j < i + len; ++j)
-                        refCount[j] = len;
+                    {
+                        assert(refCount[j].refLen == 0);
+                        refCount[j].refLen = len;
+                        refCount[j].offsetInRef = j - i;
+                    }
 
                     i += len;
                     if (len == 1)
@@ -1138,7 +1164,7 @@ int main(int argc, char** argv)
     if (argc < 3)
     {
         std::cout << "Usage: psg_pack [OPTION] input_file output_file" << std::endl;
-        std::cout << "Example: psg_pack --level 1 file1.psg packet.mus" << std::endl;
+        std::cout << "Example: psg_pack --level 1 file1.psg packetd.mus" << std::endl;
         std::cout << "Default options: --fast --clean" << std::endl;
         std::cout << "" << std::endl;
         std::cout << "Options:" << std::endl;

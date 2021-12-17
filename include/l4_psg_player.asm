@@ -2,7 +2,8 @@
 //psndcj//tbk - 11.02.2012,01.12.2013
 //source for sjasm cross-assembler
 //modified by physic 8.12.2021
-// This is more slow version of player that can play all levels of compression [0..4]
+//Max time is reduced from 1089t to 799t (-290t)
+//Player size is increased from 348 to 470 bytes (+122 bytes)
 
 /*
 11hhhhhh llllllll nnnnnnnn	3	CALL_N - вызов с возвратом для проигрывания (nnnnnnnn + 1) значений по адресу 11hhhhhh llllllll
@@ -141,6 +142,9 @@ rest_value
 			inc (hl)
 			ret
 
+same_level_ref
+			ld	 (hl),a
+			jr continue_ref
 
 pl1x		// Process ref	
 			ld b, (hl)
@@ -150,9 +154,23 @@ pl1x		// Process ref
 			jp p, pl10					; 7+6+7+6+10=36t
 
 pl11		
-			ld a, (hl)			
-			inc hl			
-			SAVE_POS 0					; 7+6+38=51
+			ex	de,hl
+			ld  hl, (pl_track+1)
+			dec	 l
+			dec (hl)
+			ld a, (de)			
+			inc de		
+			jr	 z, same_level_ref
+			jp	 p, nested_ref
+			inc	 (hl)
+nested_ref
+			//SAVE_POS 0					; 7+6+38=51
+				//ex	de,hl
+				//ld	hl, (pl_track+1)
+				inc	 l
+				ld	(hl),e
+				inc	l
+				ld	(hl),d						; 4+16+7+4+7=38/40t
 
 			// update nested level
 			inc  l						
@@ -161,6 +179,7 @@ pl11
 			ld	 (pl_track+1),hl		; 4+7+4+16=31
 			
 			// update pos at new nested level
+continue_ref			
 			ex	de,hl					
 			add hl, bc	
 			dec	 hl	//< Temporary. To be compatble with levels 0..3 for this player
