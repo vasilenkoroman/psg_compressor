@@ -883,12 +883,16 @@ private:
                     --chainLen;
                 }
 
+                bool truncateLastRef2 = false;
                 while (chainLen > 0 && refCount[i + chainLen - 1].refLen > 1 
                     && refCount[i + chainLen - 1].offsetInRef < refCount[i + chainLen - 1].refLen-1)
                 {
                     sizes.pop_back();
                     --chainLen;
+                    truncateLastRef2 = true;
                 }
+                if (truncateLastRef2)
+                    --reducedLen;
 
 #if 0
                 while (chainLen > 0 && ayFrames[i + chainLen - 1].symbol <= kMaxDelay)
