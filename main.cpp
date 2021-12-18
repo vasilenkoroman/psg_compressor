@@ -8,10 +8,10 @@
 #include <chrono>
 #include <array>
 
-static const uint8_t kEndTrackMarker = 0x3f;
-static const int kMaxDelay = 33;
+static const uint8_t kEndTrackMarker = 0x0f;
+static const int kMaxDelay = 256;
 static const int kMaxRefOffset = 16384;
-static const int kPsg1iSize = 16;
+static const int kPsg2iSize = 32;
 
 enum Flags
 {
@@ -91,16 +91,13 @@ struct Stats
     int unusedEnvForm = 0;
     int unusedNoise = 0;
 
-    std::map<int, int> psg1SymbolToUsage;
-    std::multimap<int, int> psg1UsageToSymbol;
-    std::map<int, int> psg1SymbolIndex;
-    //std::array<RegMap, kPsg1iSize> psg1i;
+    std::map<int, int> maskToUsage;
+    std::multimap<int, int> usageToMask;
+    std::map<int, int> maskIndex;
 };
 
 bool isPsg2(const RegMap& regs, uint16_t symbol, const Stats& stats)
 {
-    if (regs.size() == 2)
-        return stats.psg1SymbolToUsage.count(symbol) == 0;
     return regs.size() > 1;
 }
 
@@ -197,7 +194,8 @@ public:
 
     int pl00TimeForFrame(const RegMap& regs, uint16_t symbol)
     {
-        if (m_stats.psg1SymbolToUsage.count(symbol) > 0)
+        //if (m_stats.psg1SymbolToUsage.count(symbol) > 0)
+        if (1)
             return 175;
         else
             return 88;
@@ -558,10 +556,10 @@ private:
         uint16_t symbol = toSymbol(changedRegs);
         ayFrames.push_back({ symbol, lastCleanedRegs, changedRegs }); //< Flush previous frame.
 
-        if (changedRegs.size() == 2)
+        if (changedRegs.size() > 1 && changedRegs.size() <= 6)
         {
-            // Gather long PSG1 stats
-            ++stats.psg1SymbolToUsage[symbol];
+            uint16_t mask = longRegMask(changedRegs);
+            ++stats.maskToUsage[mask];
         }
 
         changedRegs.clear();
@@ -599,16 +597,24 @@ private:
         }
     }
 
-    void serializeEmptyFrames(int count)
+    void serializeDelay(int count)
     {
         if (count > 0)
             serializeDelayTimings(count, 0);
 
         while (count > 0)
         {
-            uint8_t value = std::min(33, count);
-            uint8_t header = 30;
-            compressedData.push_back(header + value - 1);
+            int value = std::min(kMaxDelay, count);
+            if (value > 16)
+            {
+                compressedData.push_back(0);
+                compressedData.push_back((uint8_t)value - 1);
+            }
+            else
+            {
+                uint8_t header = 0x10;
+                compressedData.push_back(header + value - 1);
+            }
             count -= value;
         }
     };
@@ -660,6 +666,17 @@ private:
             bit >>= 1;
         }
         return result;
+    }
+
+    uint16_t longRegMask(const RegMap& regs)
+    {
+        uint8_t mask1 = makeRegMask(regs, 0, 6);
+        uint8_t mask2 = makeRegMask(regs, 6, 14);
+
+        mask1 = reverseBits(mask1) << 2;
+        mask2 = reverseBits(mask2);
+
+        return mask1 + mask2 * 256;
     }
 
     int shortRefTiming(int pos)
@@ -725,32 +742,55 @@ private:
 
         timingsData.push_back(th.frameTimings(regs, 0, symbol));
 
+        uint8_t header1 = 0;
+
+        uint16_t longMask = longRegMask(regs);
         bool usePsg2 = isPsg2(regs, symbol, stats);
 
-        uint8_t header1 = 0;
+
+        auto itr = stats.maskIndex.find(longMask);
         if (usePsg2)
         {
-            auto mask = (makeRegMask(regs, 0, 6) >> 2);
-            header1 = 0x40 + mask;
+            if (itr != stats.maskIndex.end())
+            {
+                header1 = 0x20 + itr->second;
+            }
+            else
+            {
+                auto mask = (makeRegMask(regs, 0, 6) >> 2);
+                header1 = 0x40 + mask;
+            }
             compressedData.push_back(header1);
 
             int firstsHalfRegs = 0; //< Statistics
-            for (const auto& reg : regs)
+            if (itr != stats.maskIndex.end())
             {
-                if (reg.first < 6)
+                for (auto itr = regs.rbegin(); itr != regs.rend(); ++itr)
                 {
-                    compressedData.push_back(reg.second); // reg value
-                    ++firstsHalfRegs;
+                    if (itr->first < 6)
+                        compressedData.push_back(itr->second);
+                }
+            }
+            else
+            {
+                for (const auto& reg : regs)
+                {
+                    if (reg.first < 6)
+                    {
+                        compressedData.push_back(reg.second); // reg value
+                        ++firstsHalfRegs;
+                    }
                 }
             }
             ++stats.firstHalfRegs[firstsHalfRegs];
             ++stats.secondHalfRegs[regs.size() - firstsHalfRegs];
-
+            
             uint8_t header2 = makeRegMask(regs, 6, 14);
             header2 = reverseBits(header2);
-            compressedData.push_back(header2);
+            if (itr == stats.maskIndex.end())
+                compressedData.push_back(header2);
 
-            if ((header2 & 0x7f) == 0)
+            if ((header2 & 0x7f) == 0 && itr == stats.maskIndex.end())
             {
                 // play_all branch. Serialize regs in regular order
                 for (auto itr = regs.begin(); itr != regs.end(); ++itr)
@@ -771,43 +811,36 @@ private:
         }
         else
         {
-            const auto itr = stats.psg1SymbolIndex.find(symbol);
-            if (itr != stats.psg1SymbolIndex.cend())
+            assert(regs.size() == 1);
+            for (const auto& reg : regs)
             {
-                // PSG1i
-                compressedData.push_back((itr->second << 1) + 1);
-            }
-            else
-            {
-                assert(regs.size() == 1);
-                for (const auto& reg : regs)
-                {
-                    compressedData.push_back(reg.first << 1);
-                    compressedData.push_back(reg.second); // reg value
-                    header1 = 0;
-                }
+                compressedData.push_back(reg.first + 1);
+                compressedData.push_back(reg.second); // reg value
+                header1 = 0;
             }
         }
 
         stats.ownBytes += compressedData.size() - prevSize;
-
     }
 
     int serializedFrameSize(uint16_t pos)
     {
         const uint16_t symbol = ayFrames[pos].symbol;
         if (symbol <= kMaxDelay)
-            return 1;
+            return symbol <= 16 ? 1 : 2;
 
         auto regs = symbolToRegs[symbol];
-        if (isPsg2(regs, symbol, stats))
-            return 2 + regs.size();
 
-        if (stats.psg1SymbolToUsage.count(symbol))
+        if (isPsg2(regs, symbol, stats))
         {
-            // PSG1i
-            return 1;
+            int headerSize = 2;
+            uint16_t mask = longRegMask(regs);
+            if (stats.maskIndex.count(mask))
+                --headerSize;
+
+            return headerSize + regs.size();
         }
+
 
         return regs.size() * 2;
     };
@@ -1032,16 +1065,16 @@ public:
         }
         writeDelay(delayCounter);
 
-        for (const auto& v : stats.psg1SymbolToUsage)
-            stats.psg1UsageToSymbol.emplace(v.second, v.first);
-        while (stats.psg1UsageToSymbol.size() > kPsg1iSize)
-            stats.psg1UsageToSymbol.erase(stats.psg1UsageToSymbol.begin());
-        stats.psg1SymbolToUsage.clear();
+        for (const auto& v: stats.maskToUsage)
+            stats.usageToMask.emplace(v.second, v.first);
+        while (stats.usageToMask.size() > kPsg2iSize)
+            stats.usageToMask.erase(stats.usageToMask.begin());
+        stats.maskToUsage.clear();
         int i = 0;
-        for (const auto& v : stats.psg1UsageToSymbol)
+        for (const auto& v: stats.usageToMask)
         {
-            stats.psg1SymbolToUsage[v.second] = v.first;
-            stats.psg1SymbolIndex[v.second] = i++;
+            stats.maskToUsage[v.second] = v.first;
+            stats.maskIndex[v.second] = i++;
         }
 
         return 0;
@@ -1059,17 +1092,12 @@ public:
             return -1;
         }
 
-        compressedData.resize(stats.psg1SymbolIndex.size() * 4);
-        for (const auto& value : stats.psg1SymbolIndex)
+        compressedData.resize(kPsg2iSize * 2);
+        for (const auto& value: stats.maskIndex)
         {
-            auto regs = symbolToRegs[value.first];
-            assert(regs.size() == 2);
-            int offset = value.second * 4;
-            for (const auto& reg: regs)
-            {
-                compressedData[offset++] = reg.first;
-                compressedData[offset++] = reg.second;
-            }
+            const int offset = value.second * 2;
+            compressedData[offset] = (uint8_t)value.first;
+            compressedData[offset+1] = (value.first >> 8);
         }
 
         // compressData
@@ -1082,7 +1110,7 @@ public:
 
             if (ayFrames[i].symbol <= kMaxDelay)
             {
-                serializeEmptyFrames(ayFrames[i].symbol);
+                serializeDelay(ayFrames[i].symbol);
                 stats.emptyFrames += ayFrames[i].symbol;
                 ++stats.emptyCnt;
                 ++i;
