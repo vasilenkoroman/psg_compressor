@@ -30,8 +30,11 @@
 Лупинг также не выходит за пределы макс. расчитанных таймингов, но формирует отдельную запись проигрывания, т.е. есть задержка между последним и 1-м фреймом трека в 1 frame.
 */
 
+MAX_NESTED_LEVEL EQU 4
+
 LD_HL_CODE	EQU 0x2A
 JR_CODE		EQU 0x18
+
 
 			MACRO SAVE_POS keepFlags
 				ex	de,hl
@@ -87,10 +90,14 @@ saved_track
 			jr trb_rep					; 10+16+12=38t
 			// total: 34+38=72t
 		
+single_pause
+			pop	 de
+			jp	 after_play_frame
+
 // pause or end track
 pl_pause								; 90 on enter
 			inc hl
-			ret z
+			jr z, single_pause
 			SAVE_POS 0					; 40
 			cp 4 * 63 - 120
 			jr z, endtrack				; 6+16+5+7+7=41
@@ -125,7 +132,7 @@ pl_track	ld hl, (stack_pos+1)
 
 pl_frame	call pl0x
 
-
+after_play_frame
 			SAVE_POS 0						; 38
 			dec	 l
 trb_rep		dec	 l
@@ -343,8 +350,10 @@ play_by_mask_13_6
 			// total: 318 + 330 = 648 (all_0_5 + mask_6_13)
 			// total: 325 + 330 = 655 (mask_0_5 + mask_6_13)
 
-stack_pos	DB 0,0,0, 0,0,0, 0,0,0, 0,0,0		//< Up to 4 nested levels
+stack_pos	
+			dup MAX_NESTED_LEVEL		// Make sure packed file has enough nested level here
+			DB 0,0,0
+			edup
 stack_pos_end
-
 
 			DISPLAY	"player code occupies ", /D, $-stop, " bytes"

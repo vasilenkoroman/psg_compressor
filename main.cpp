@@ -321,6 +321,7 @@ public:
         int refTo = 0;
         int refLen = 0;
         int level = 0;
+        int offsetInRef = 0;
     };
 
     std::vector<uint8_t> srcPsgData;
@@ -870,7 +871,7 @@ private:
                         break;
                     ++chainLen;
                     const auto& ref = refCount[i + j];
-                    if (ref.refLen == 0  || (ref.refLen > 1 && ref.refTo != 0))
+                    if (ref.refLen == 0  || (ref.refLen > 1 && ref.offsetInRef == 0))
                     {
                         ++reducedLen; //< Don't count 1-symbol refs during ref serialization
                     }
@@ -880,29 +881,6 @@ private:
                 }
 
                 bool truncateLastRef2 = false;
-
-                int lastIndex = i + chainLen - 1;
-                int index = lastIndex;
-                for (; chainLen > 0 && refCount[index].refLen > 1 && refCount[index].refTo == 0; --index);
-                if (index < lastIndex)
-                {
-                    int validLastIndex = index + refCount[index].refLen - 1;
-                    if (validLastIndex > lastIndex)
-                    {
-                        for (int j = 0; j < lastIndex - index; ++j)
-                        {
-                            sizes.pop_back();
-                            --chainLen;
-                        }
-                        truncateLastRef2 = true;
-                    }
-                    else
-                    {
-                        int gg = 4;
-                    }
-                }
-
-#if 0
                 while (chainLen > 0 && refCount[i + chainLen - 1].refLen > 1 
                     && refCount[i + chainLen - 1].offsetInRef < refCount[i + chainLen - 1].refLen-1)
                 {
@@ -910,7 +888,6 @@ private:
                     --chainLen;
                     truncateLastRef2 = true;
                 }
-#endif
                 if (truncateLastRef2)
                     --reducedLen;
 
@@ -919,6 +896,7 @@ private:
                     sizes.pop_back();
                     --chainLen;
                 }
+
 
                 int benifit = *sizes.rbegin() - (chainLen == 1 ? 2 : 3);
                 if (benifit > bestBenifit)
@@ -956,6 +934,7 @@ public:
         {
             assert(refCount[j].refLen == 0);
             refCount[j].refLen = len;
+            refCount[j].offsetInRef = j - i;
         }
         if (len > 1)
             updateNestedLevel(pos, len, 1);
