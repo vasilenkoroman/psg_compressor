@@ -14,8 +14,8 @@
 00111100..00011110          1	PAUSE32 - пауза pppp+1 (1..32, N + 120)
 00111111					1	маркер окончания трека
 
-000hhhh0 vvvvvvvv			1	PSG1 проигрывание, 1 register, 0000hhhh - номер регистра, vvvvvvvv - значение
-000hhhh1 vvvvvvvv			1	PSG1 проигрывание, 2 registers, 0000hhhh - номер регистра, vvvvvvvv - значение
+000hhhh1 vvvvvvvv			1	PSG1 проигрывание, 1 register, 	hhhh - номер регистра, vvvvvvvv - значение
+000hhhh0 					1	PSG1i проигрывание, 2 registers, hhhh - номер индексной записи в начале файла
 
 00111101					1   Not used.
 00111110					1   Not used.
@@ -26,7 +26,7 @@
 Т.о. проигрывание идет по ветке play_all_xx, что быстрее.
 Дополнительно, эта же опция пакера избегает сочетания "заполнены все регистры(в том числе после заливки доп. регистров) + ссылка длиной более 1 байт".
 Все это несколько ухудшает сжатие, но за счет частичной поддержки вложенных ссылок, оно остается на уровне оригинального плейера.
-Максимальные тайминги расчитаны при включенной опции пакера 'fast'. Если ее отключить, то сжатие улучшится, но максимальные тайминги поднимутся примерно на 120t (пока точно не считал).
+Максимальные тайминги расчитаны при уровне компрессии 1 (по-умолчанию).
 Лупинг также не выходит за пределы макс. расчитанных таймингов, но формирует отдельную запись проигрывания, т.е. есть задержка между последним и 1-м фреймом трека в 1 frame.
 */
 
@@ -71,26 +71,6 @@ saved_track
 			ld (trb_play), hl
 			jr trb_rep					; 10+16+12=38t
 			// total: 34+38=72t
-		
-// pause or end track
-pl_pause								; 90 on enter
-			inc hl
-			ld (pl_track+1), hl
-			ret z
-			cp 4 * 63 - 120
-			jr z, endtrack				; 6+16+5+7+7=41
-			//set pause
-			rrca
-			rrca
-			ld (pause_rep), a	
-			ld  a, l
-			ld (saved_track+2), a
-			ld hl, JR_CODE + (trb_pause - trb_play - 2) * 256
-			ld (trb_play), hl
-			
-			pop	 hl						
-			ret							; 4+4+13+4+13+10+16+10+10=84
-			// total for pause: 94+41+84=219t
 
 endtrack	//end of track
 			pop	 hl
@@ -106,6 +86,7 @@ pl_track	ld hl, 0
 			jr c, pl1x					    ; 10+7+4+7=28t
 
 pl_frame	call pl0x
+after_play_frame
 			ld (pl_track+1), hl				;17+16=33t
 			
 trb_rep		ld a, 0						
@@ -140,38 +121,69 @@ pl11		ld a, (hl)
 			ret								; 11+7+4+17+16+10=65t
 			// total: 28+5+36+36+65=170t + pl0x time (661-32)=799t (max pl0x time is blocked here by packer for level 1)
 
-pl00		sub 120						; 28+17+21+5=71 on enter
-			jr nc, pl_pause
-		//psg1
-			// 2 registr - maximum, second without check
-			ld a, (hl)
+single_pause
+			pop	 de
+			jp	 after_play_frame
+long_pause
+			inc	 hl
+			ld	 a, (hl)
 			inc hl
-			rrca
-			jr nc, 7f					; 7+7+7+6+4+7=38
-			ex de, hl
-			add	 a
-			add	 a
-mus_low		add	 0
-			ld	 l, a
-mus_high	adc	 0
-			sub	 l
-			ld	 h, a					; 4+4+4+7+4+7+4+4=38
+			jr	 pause_cont
+pl_pause	and	 #0f
+			inc hl
+			jr z, single_pause
+pause_cont	ld (pause_rep), a
+			ld (pl_track+1), hl
+			ld  a, l
+			ld (saved_track+2), a
 
-			outi
-			ld b, #bf
-			outi
-			ld b, #ff
-			outi
-			ld b, #bf
-			outi
-			ex	 de, hl
-			ret							; 16+(7+16)*3+4+10=99
-			; total: 38+38+99=175
-7			out (c),a
+			ld hl, JR_CODE + (trb_pause - trb_play - 2) * 256
+			ld (trb_play), hl
+			
+			pop	 hl						
+			ret							; 4+4+13+4+13+10+16+10+10=84
+			// total for pause: 94+41+84=219t
+
+pause_or_psg1
+			add	 a
+			ld a, (hl)
+			jr c, pl_pause
+			jr z, long_pause
+		//psg1 or end of track
+			cp #0f
+			jr z, endtrack
+			dec a	 
+			inc hl
+
+			out (c),a
 			ld b, #bf
 			outi
 			ret							; 12+7+16+10=45
-			; total: 38+5+45=88
+
+pl00		add	 a
+			jr	 nc, pause_or_psg1
+			ld de, #05bf
+		// psg2i
+			rrca:rrca						; 4+5+10+4=23
+
+			exx
+mus_low		add	 0
+			ld	 e, a
+mus_high	adc	 0
+			sub	 e
+			ld	 d, a					
+			ld	 a,(de)
+			inc	 de
+			exx							
+			inc	 hl						; 4+7+4+7+4+4+7+6+4+6=53
+			call reg_left_6
+
+			exx
+			ld	 a, (de)
+			exx
+			add a
+			ld b,#ff
+			jp play_by_mask_13_6
 
 pl10
 			ld (pl_track+1), hl		
@@ -270,7 +282,25 @@ play_by_mask_13_6
 			outi					
 			ld b,#ff				;  7+7+12+4+16+7=53
 1			
-			dup 6
+
+			dec d
+			add a
+			jr c,1f
+			out (c),d
+			ld b,e
+			outi				
+			ld b,#ff
+1			
+
+			dec d
+reg_left_6	add a
+			jr c,1f
+			out (c),d
+			ld b,e
+			outi				
+			ld b,#ff
+1			
+			dup 4
 				dec d
 				add a
 				jr c,1f

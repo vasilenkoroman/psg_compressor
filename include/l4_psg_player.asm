@@ -125,7 +125,7 @@ pl11
 			dec (hl)
 			jr	 z, same_level_ref		; 4+16+4+11+7+6+7=55
 nested_ref
-			// Save Pos
+			// Save pos for the current nested level
 			inc	 l
 			ld	(hl),e
 			inc	l
@@ -134,7 +134,7 @@ nested_ref
 same_level_ref
 			ld	 (hl),a
 			inc	 l
-			// update pos at new nested level
+			// update nested level
 			ld	 (pl_track+1),hl		; 4+7+4+7+4+7+4+16=53
 
 			ex	de,hl					
@@ -143,6 +143,7 @@ same_level_ref
 			ld a, (hl)
 			add a		            	; 4+11+7+4=26
 			call pl0x					; 17
+			// Save pos for the new nested level
 			SAVE_POS 					; 38
 			ret							; 17+38+10=65
 			// total: 28+36+55+53+26+17+38=253t + pl0x time (661)=914t
@@ -158,13 +159,18 @@ long_pause
 pl_pause	and	 #0f
 			inc hl
 			jr z, single_pause
-pause_cont	SAVE_POS 					; 40
+pause_cont	
 			//set pause
 			ld (pause_rep), a	
-			
-			dec	 l
+			//SAVE_POS
+			ex	de,hl
+			ld	hl, (pl_track+1)
 			ld  a, l
 			ld (saved_track+2), a
+
+			ld	(hl),e
+			inc	l
+			ld	(hl),d						; 4+16+7+4+7=38
 
 			ld hl, JR_CODE + (trb_pause - trb_play - 2) * 256
 			ld (trb_play), hl
