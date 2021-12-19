@@ -82,45 +82,33 @@ saved_track
 			ld	hl, (trb_play+1)
 			jr trb_rep					; 10+16+12=38t
 			// total: 34+38=72t
-		
-
-			//play note
-trb_play	
-pl_track	ld hl, (stack_pos+1)
-
-			ld a, (hl)
-			add a
-			jr c, pl1x					    ; 10+7+4+7=28t
-
-pl_frame	call pl0x
-
-after_play_frame
-			SAVE_POS 						; 38
-			dec	 l
-trb_rep		dec	 l
-			ld	 a,(hl)
-			sub	 1
-			jr	 nz, continue_rep
-trb_rest	dec	 l
-			dec	 l
-			ld	 (pl_track+1), hl
-			ret								; 4+4+7+7+5+4+4+16+10=61
-			// total: 28+17+38+61=144t + pl0x time(661t) = 805t(max)
-continue_rep
-			ret	 c
-			ld	 (hl),a
-			ret
 
 endtrack	//end of track
 			pop	 hl
 			jr mus_init
 			// total: 103+41+5+10+12=171t
 
-same_level_ref
-			ld a, (de)			
-			ld	 (hl),a
-			jr continue_ref
+pl_frame	call pl0x						; 17
+after_play_frame
+			xor	 a
+			ld	 (stack_pos), a				;4+13=17
+			SAVE_POS 						
+			dec	 l
+trb_rep		dec	 l
+			dec (hl)
+			ret	 nz							; 38+4+4+11+5=62
+trb_rest	
+			dec	 l
+			dec	 l
+			ld	 (pl_track+1), hl
+			ret								; 4+4+16+10=34
+			// total: 28+5+17+17+62+34=163t + pl0x time(661t) = 824t(max)
 
+trb_play	
+pl_track	ld hl, (stack_pos+1)
+			ld a, (hl)
+			add a
+			jr nc, pl_frame				    ; 10+7+4+7=28t
 pl1x		// Process ref	
 			ld b, (hl)
 			inc hl
@@ -129,41 +117,35 @@ pl1x		// Process ref
 			jp p, pl10					; 7+6+7+6+10=36t
 
 pl11		
+			ld a, (hl)			
+			inc hl	
 			ex	de,hl
 			ld  hl, (pl_track+1)
 			dec	 l
-			ld	 a,(hl)
-			sub	 1
-			jr	 z, same_level_ref
-			jr	 c, nested_ref
-			ld (hl), a					; 4+16+4+7+7+7+7+7=59
+			dec (hl)
+			jr	 z, same_level_ref		; 4+16+4+11+7+6+7=55
 nested_ref
-			inc de		
 			// Save Pos
 			inc	 l
 			ld	(hl),e
 			inc	l
 			ld	(hl),d
-			dec	 de						; 6+4+7+4+7+6=34
-
-			// update nested level
 			inc  l						
-			ld a, (de)			
+same_level_ref
 			ld	 (hl),a
 			inc	 l
-			ld	 (pl_track+1),hl		; 4+7+7+4+16=38
-			
 			// update pos at new nested level
-continue_ref			
+			ld	 (pl_track+1),hl		; 4+7+4+7+4+7+4+16=53
+
 			ex	de,hl					
 			add hl, bc	
+
 			ld a, (hl)
 			add a		            	; 4+11+7+4=26
-
-			call pl0x
-			SAVE_POS 					
+			call pl0x					; 17
+			SAVE_POS 					; 38
 			ret							; 17+38+10=65
-			// total: 28+5+36+59+34+38+26+65=291t + pl0x time (661)=948t
+			// total: 28+36+55+53+26+17+38=253t + pl0x time (661)=914t
 
 single_pause
 			pop	 de

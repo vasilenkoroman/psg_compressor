@@ -635,8 +635,8 @@ private:
         int offset = frameOffsets[pos];
         int recordSize = reducedLen == 1 ? 2 : 3;
         int16_t delta = offset - compressedData.size() - recordSize;
-        if (reducedLen > 1)
-            ++delta;
+        if (reducedLen > 1 && level < CompressionLevel::l4)
+               ++delta;
         assert(delta < 0);
 
         uint8_t* ptr = (uint8_t*)&delta;
