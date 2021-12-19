@@ -34,15 +34,11 @@ JR_CODE		EQU 0x18
 LD_A_CODE	EQU 0x3e
 
 
-			MACRO SAVE_POS keepFlags
+			MACRO SAVE_POS
 				ex	de,hl
 				ld	hl, (pl_track+1)
 				ld	(hl),e
-				IF (keepFlags == 1)
-					inc	hl
-				ELSE
-					inc	l
-				ENDIF					
+				inc	l
 				ld	(hl),d						; 4+16+7+4+7=38/40t
 			ENDM
 							
@@ -99,7 +95,7 @@ pl_track	ld hl, (stack_pos+1)
 pl_frame	call pl0x
 
 after_play_frame
-			SAVE_POS 0						; 38
+			SAVE_POS 						; 38
 			dec	 l
 trb_rep		dec	 l
 			ld	 a,(hl)
@@ -108,8 +104,8 @@ trb_rep		dec	 l
 trb_rest	dec	 l
 			dec	 l
 			ld	 (pl_track+1), hl
-			ret								; 4+11+5+4+7+13+10=54
-			// total: 28+17+38+54=137t + pl0x time(661t) = 798t(max)
+			ret								; 4+4+7+7+5+4+4+16+10=61
+			// total: 28+17+38+61=144t + pl0x time(661t) = 805t(max)
 continue_rep
 			ret	 c
 			ld	 (hl),a
@@ -122,7 +118,6 @@ endtrack	//end of track
 
 same_level_ref
 			ld a, (de)			
-			inc de		
 			ld	 (hl),a
 			jr continue_ref
 
@@ -140,38 +135,35 @@ pl11
 			ld	 a,(hl)
 			sub	 1
 			jr	 z, same_level_ref
-			jp	 c, nested_ref
-			ld (hl), a
+			jr	 c, nested_ref
+			ld (hl), a					; 4+16+4+7+7+7+7+7=59
 nested_ref
-			ld a, (de)			
 			inc de		
-
-			//SAVE_POS 0					; 7+6+38=51
-				//ex	de,hl
-				//ld	hl, (pl_track+1)
-				inc	 l
-				ld	(hl),e
-				inc	l
-				ld	(hl),d						; 4+16+7+4+7=38/40t
+			// Save Pos
+			inc	 l
+			ld	(hl),e
+			inc	l
+			ld	(hl),d
+			dec	 de						; 6+4+7+4+7+6=34
 
 			// update nested level
 			inc  l						
+			ld a, (de)			
 			ld	 (hl),a
 			inc	 l
-			ld	 (pl_track+1),hl		; 4+7+4+16=31
+			ld	 (pl_track+1),hl		; 4+7+7+4+16=38
 			
 			// update pos at new nested level
 continue_ref			
 			ex	de,hl					
 			add hl, bc	
-			dec	 hl	//< Temporary. To be compatble with levels 0..3 for this player
 			ld a, (hl)
 			add a		            	; 4+11+7+4=26
 
 			call pl0x
-			SAVE_POS 0					
+			SAVE_POS 					
 			ret							; 17+38+10=65
-			// total: 28+5+36+51+31+26+65=242t + pl0x time (661)=903t
+			// total: 28+5+36+59+34+38+26+65=291t + pl0x time (661)=948t
 
 single_pause
 			pop	 de
@@ -184,7 +176,7 @@ long_pause
 pl_pause	and	 #0f
 			inc hl
 			jr z, single_pause
-pause_cont	SAVE_POS 0					; 40
+pause_cont	SAVE_POS 					; 40
 			//set pause
 			ld (pause_rep), a	
 			
@@ -243,7 +235,7 @@ mus_high	adc	 0
 			; total: 5+23+47+27+25 - 6-10-7-6-7-7-10 = 74 (longer that PSG2)
 
 pl10
-			SAVE_POS 0
+			SAVE_POS 
 			ex	de,hl
 			set 6, b
 			add hl, bc
