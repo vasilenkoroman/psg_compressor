@@ -66,6 +66,42 @@ auto splitRegs(const RegMap& regs)
     return std::tuple<int, int>(firstRegs, secondRegs);
 }
 
+uint8_t reverseBits(uint8_t value)
+{
+    uint8_t b = value;
+    b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+    b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+    b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+    return b;
+}
+
+uint8_t makeRegMask(const RegMap& regs, int from, int to)
+{
+    uint8_t result = 0;
+    uint8_t bit = 0x80;
+    for (int i = from; i < to; ++i)
+    {
+        const auto reg = regs.find(i);
+        if (reg == regs.end())
+        {
+            result += bit;
+        }
+        bit >>= 1;
+    }
+    return result;
+}
+
+uint16_t longRegMask(const RegMap& regs)
+{
+    uint8_t mask1 = makeRegMask(regs, 0, 6);
+    uint8_t mask2 = makeRegMask(regs, 6, 14);
+
+    mask1 = reverseBits(mask1) << 2;
+    mask2 = reverseBits(mask2);
+
+    return mask1 + mask2 * 256;
+}
+
 struct Stats
 {
     int psgFrames = 0;
@@ -129,6 +165,11 @@ public:
         return 13 + 16 + 4 + 13 + 10 + 16 + 10 + 10;
     }
 
+    int after_play_frame(int trbRep)
+    {
+        return 16 + trbRepTimings(trbRep);
+    }
+
     int delayTimings(TimingState state, int trbRep)
     {
         static const int pl_pause = 98;
@@ -137,7 +178,7 @@ public:
         {
             case TimingState::single:
                 result = pl_pause + 12 + 7 + 6 + 12 + 10 + 10;
-                result += trbRepTimings(trbRep);
+                result += after_play_frame(trbRep);
                 break;
             case TimingState::longFirst:
                 result = pl_pause + 7 + 12 + 6 + 7 + 6 + 12 + pause_cont();
@@ -184,6 +225,31 @@ public:
         return result;
     }
 
+    static int reg_left_6(const RegMap& regs)
+    {
+        int result = 0;
+
+        if (regs.count(5))
+            result += 4 + 7 + 12 + 4 + 16 + 7;
+        else
+            result += 4+12;
+
+        for (int i = 4; i > 0; --i)
+        {
+            if (regs.count(i))
+                result += 54;
+            else
+                result += 20;
+        }
+
+        if (regs.count(0) == 0)
+            result += 4 + 11;
+        else
+            result += 55;
+
+        return result;
+    }
+
     static int play_all_0_5_end(const RegMap& regs)
     {
         const auto [firstRegs, secondRegs] = splitRegs(regs);
@@ -203,11 +269,10 @@ public:
 
     int pl00TimeForFrame(const RegMap& regs, uint16_t symbol)
     {
-        //if (m_stats.psg1SymbolToUsage.count(symbol) > 0)
-        if (1)
-            return 175;
-        else
-            return 88;
+        if (regs.size() == 1)
+            return 4 + 12 + 4 + 7 + 7 + 7+7+7+4+6+45;
+
+        return 29+53+17 + reg_left_6(regs) + 36 + play_by_mask_13_6(regs);
     }
 
     int pl0xTimings(const RegMap& regs, uint16_t symbol)
@@ -216,8 +281,10 @@ public:
         int secondRegsExcept13 = secondRegs;
         if (regs.count(13) == 1)
             --secondRegsExcept13;
+
+        uint16_t longMask = longRegMask(regs);
         bool psg2 = isPsg2(regs, symbol, m_stats);
-        if (!psg2)
+        if (!psg2 || m_stats.maskIndex.count(longMask))
             return 21 + 5 + pl00TimeForFrame(regs, symbol);
 
         // PSG2 timings
@@ -631,15 +698,6 @@ private:
         }
     };
 
-    uint8_t reverseBits(uint8_t value)
-    {
-        uint8_t b = value;
-        b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
-        b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
-        b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
-        return b;
-    }
-
     void serializeRef(uint16_t pos, int len, uint8_t reducedLen)
     {
         serializeRefTimings(pos, len, reducedLen);
@@ -664,33 +722,6 @@ private:
             compressedData.push_back(reducedLen - 1);
     };
     
-    uint8_t makeRegMask(const RegMap& regs, int from, int to)
-    {
-        uint8_t result = 0;
-        uint8_t bit = 0x80;
-        for (int i = from; i < to; ++i)
-        {
-            const auto reg = regs.find(i);
-            if (reg == regs.end())
-            {
-                result += bit;
-            }
-            bit >>= 1;
-        }
-        return result;
-    }
-
-    uint16_t longRegMask(const RegMap& regs)
-    {
-        uint8_t mask1 = makeRegMask(regs, 0, 6);
-        uint8_t mask2 = makeRegMask(regs, 6, 14);
-
-        mask1 = reverseBits(mask1) << 2;
-        mask2 = reverseBits(mask2);
-
-        return mask1 + mask2 * 256;
-    }
-
     int shortRefTiming(int pos)
     {
         auto symbol = ayFrames[pos].symbol;
