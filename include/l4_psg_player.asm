@@ -103,7 +103,7 @@ trb_play
 pl_track	ld hl, (stack_pos+1)
 			ld a, (hl)
 			add a
-			jr nc, pl_frame				    ; 10+7+4+7=28t
+			jr nc, pl_frame				    ; 16+7+4+7=34t
 pl1x		// Process ref	
 			ld b, (hl)
 			inc hl
@@ -141,7 +141,7 @@ same_level_ref
 			// Save pos for the new nested level
 			SAVE_POS 					; 38
 			ret							; 17+38+10=65
-			// total: 28+36+55+26+27+26+17+38=253t + pl0x time (661)=914t
+			// total: 34+36+55+26+27+26+17+38=259t + pl0x time (661)=920t
 
 single_pause
 			pop	 de
@@ -161,18 +161,16 @@ pause_cont
 			ex	de,hl
 			ld	hl, (pl_track+1)
 			ld  a, l
-			ld (saved_track+2), a
+			ld (saved_track+2), a			;13+4+16+4+13=50
 
 			ld	(hl),e
 			inc	l
-			ld	(hl),d						; 4+16+7+4+7=38
-
+			ld	(hl),d						
 			ld hl, JR_CODE + (trb_pause - trb_play - 2) * 256
-			ld (trb_play), hl
+			ld (trb_play), hl				; 7+4+7+10+16=44
 			
 			pop	 hl						
-			ret							; 4+4+13+4+13+10+16+10+10=84
-			// total for pause: 94+41+84=219t
+			ret							; 50+44+10+10=114
 
 pause_or_psg1
 			add	 a
@@ -225,7 +223,7 @@ pl10
 
 			ld a, (hl)
 			add a		            	; 4+8+11+7+4=34
-			// total: 28+36+38+34=136t  + pl0x time(661t) = 797t(max)
+			// total: 34+36+38+34=142t  + pl0x time(661t) = 803t(max)
 
 pl0x		ld bc, #fffd				
 			add a					

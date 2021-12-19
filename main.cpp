@@ -185,29 +185,40 @@ public:
 
     int frameTimings(const RegMap& regs, int trbRep, uint16_t symbol)
     {
-        int result = 28 + 17;  //< before pl_frame
+        int result = 0;
+        if (m_stats.level < 4)
+            result += 28 + 17;  //< before pl_frame
+        else
+            result += 34+5 +17;  //< before pl_frame
         result += pl0xTimings(regs, symbol);
         if (m_stats.level < 4)
             result += 16;
         else
-            result += 5 + 59;
+            result += 59;
 
         return result + trbRepTimings(trbRep);
     }
 
     int pause_cont()
     {
-        return 13 + 16 + 4 + 13 + 10 + 16 + 10 + 10;
+        if (m_stats.level < 4)
+            return 13 + 16 + 4 + 13 + 10 + 16 + 10 + 10;
+        return 114;
     }
 
     int after_play_frame(int trbRep)
     {
-        return 16 + trbRepTimings(trbRep);
+        int result = 0;
+        if (m_stats.level < 4)
+            result += 16;
+        else
+            result += 59;
+        return result + trbRepTimings(trbRep);
     }
 
     int delayTimings(TimingState state, int trbRep)
     {
-        static const int pl_pause = 98;
+        int pl_pause = m_stats.level < 4 ? 98 : 109;
         int result = 0;
         switch (state)
         {
@@ -226,6 +237,8 @@ public:
                 break;
             case TimingState::last:
                 result = 12 + 26 + 38;
+                if (m_stats.level >= 4)
+                    result += 16;
                 result += trbRepTimings(trbRep);
                 break;
         }
@@ -362,14 +375,14 @@ public:
 
     int shortRefTimings(const RegMap& regs, uint16_t symbol)
     {
-        int result = m_stats.level >= 4 ? 136 : 115;
+        int result = m_stats.level >= 4 ? 142 : 115;
         result += TimingsHelper::pl0xTimings(regs, symbol);
         return result;
     }
 
     int longRefInitTiming(int pos, const RegMap& regs, uint16_t symbol, int symbolsLeftAtLevel)
     {
-        int result = m_stats.level >= 4 ? 253 : 170;
+        int result = m_stats.level >= 4 ? 259 : 170;
 
         if (m_stats.level >= 4 && symbolsLeftAtLevel > 0)
         {
