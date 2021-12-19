@@ -32,6 +32,7 @@ enum Flags
 enum class TimingState
 {
     single,
+    longFirst,
     first,
     mid,
     last
@@ -123,18 +124,26 @@ public:
         return result;
     }
 
+    int pause_cont()
+    {
+        return 13 + 16 + 4 + 13 + 10 + 16 + 10 + 10;
+    }
+
     int delayTimings(TimingState state, int trbRep)
     {
-        static const int kEnterToPause = 90;
+        static const int pl_pause = 98;
         int result = 0;
         switch (state)
         {
             case TimingState::single:
-                result = kEnterToPause + 6 + 16 + 11 + 16;
+                result = pl_pause + 12 + 7 + 6 + 12 + 10 + 10;
                 result += trbRepTimings(trbRep);
                 break;
+            case TimingState::longFirst:
+                result = pl_pause + 7 + 12 + 6 + 7 + 6 + 12 + pause_cont();
+                break;
             case TimingState::first:
-                result = kEnterToPause + 41 + 84;
+                result = pl_pause + 12 + 7 + 6 + 7 + pause_cont();
                 break;
             case TimingState::mid:
                 result = 12 + 10 + 11 + 11;
@@ -469,7 +478,7 @@ private:
         }
     }
 
-    void extendToFullChangeIfNeed()
+    void extendToFullChangeIfNeed(int firstThreshold, int secondThreshold)
     {
         decltype(changedRegs) firstReg, secondReg;
         for (const auto& reg : changedRegs)
@@ -480,14 +489,14 @@ private:
                 secondReg.insert(reg);
         }
 
-        if (firstReg.size() == 5)
+        if (firstReg.size() >= firstThreshold)
         {
             // Regs are about to full. Extend them to full regs.
             for (int i = 0; i < 6; ++i)
                 changedRegs[i] = lastCleanedRegs[i];
         }
 
-        if (secondReg.size() == 6 || secondReg.size() == 5)
+        if (secondReg.size() >= secondThreshold)
         {
             // Regs are about to full. Extend them to full regs (exclude reg13)
             for (int i = 6; i < 13; ++i)
@@ -551,7 +560,9 @@ private:
         }
 
         if (level < l3)
-            extendToFullChangeIfNeed();
+            extendToFullChangeIfNeed(5, 5);
+        else if (level == l4)
+            extendToFullChangeIfNeed(5, 6);
 
         uint16_t symbol = toSymbol(changedRegs);
         ayFrames.push_back({ symbol, lastCleanedRegs, changedRegs }); //< Flush previous frame.
@@ -590,7 +601,8 @@ private:
         }
         else
         {
-            timingsData.push_back(th.delayTimings(TimingState::first, trbRep));
+            auto state = count > 16 ? TimingState::longFirst : TimingState::first;
+            timingsData.push_back(th.delayTimings(state, trbRep));
             for (int i = 1; i < count - 1; ++i)
                 timingsData.push_back(th.delayTimings(TimingState::mid, trbRep));
             timingsData.push_back(th.delayTimings(TimingState::last, trbRep));
