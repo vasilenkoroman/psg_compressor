@@ -883,8 +883,8 @@ private:
         int chainPos = -1;
         int bestBenifit = 0;
         int maxReducedLen = -1;
-
-        int maxAllowedReducedLen = level < l4 ? 128 : 128;
+        
+        int maxAllowedReducedLen = level < l4 ? 128 : 255;
 
         for (int i = 0; i < pos; ++i)
         {

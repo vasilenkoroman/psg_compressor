@@ -11,14 +11,11 @@
 01MMMMMM mmmmmmmm			2+N	PSG2 проигрывание, где MMMMMM mmmmmmmm - инвертированная битовая маска регистров, далее следуют значения регистров.
 							во 2-м байте также инвертирован порядок следования регистров (13..6)
 
-00111100..00011110          1	PAUSE32 - пауза pppp+1 (1..32, N + 120)
-00111111					1	маркер окончания трека
-
-000hhhh1 vvvvvvvv			1	PSG1 проигрывание, 1 register, 	hhhh - номер регистра, vvvvvvvv - значение
-000hhhh0 					1	PSG1i проигрывание, 2 registers, hhhh - номер индексной записи в начале файла
-
-00111101					1   Not used.
-00111110					1   Not used.
+001iiiii 					1	PSG2i проигрывание, где iiiii номер индексированной маски (0..31), далее следуют значения регистров
+0001pppp					1	PAUSE16 - пауза pppp+1 (1..16)
+0000hhhh vvvvvvvv			2	PSG1 проигрывание, 0000hhhh - номер регистра + 1, vvvvvvvv - значение
+00001111					1	маркер оцончания трека
+00000000 nnnnnnnn			2	PAUSE_N - пауза nnnnnnnn+1 фреймов (ничего не выводим в регистры)
 
 
 Также эта версия частично поддерживает короткие вложенные ссылки уровня 2 (доп. ограничение - они не могут стоять в конце длинной ссылки уровня 1).
@@ -34,6 +31,7 @@ MAX_NESTED_LEVEL EQU 4
 
 LD_HL_CODE	EQU 0x2A
 JR_CODE		EQU 0x18
+LD_A_CODE	EQU 0x3e
 
 
 			MACRO SAVE_POS keepFlags
@@ -78,7 +76,6 @@ mus_init	ld hl, music
 			ret							; 10+16+4+13+7+13+10=73
 			// total for looping: 171+73=244
 
-pause_rep	db 0
 trb_pause	ld hl, pause_rep
 			dec	 (hl)
 			ret nz						; 10+11+5=26t
@@ -90,37 +87,6 @@ saved_track
 			jr trb_rep					; 10+16+12=38t
 			// total: 34+38=72t
 		
-single_pause
-			pop	 de
-			jp	 after_play_frame
-
-// pause or end track
-pl_pause								; 90 on enter
-			inc hl
-			jr z, single_pause
-			SAVE_POS 0					; 40
-			cp 4 * 63 - 120
-			jr z, endtrack				; 6+16+5+7+7=41
-			//set pause
-			rrca
-			rrca
-			ld (pause_rep), a	
-			
-			dec	 l
-			ld  a, l
-			ld (saved_track+2), a
-
-			ld hl, JR_CODE + (trb_pause - trb_play - 2) * 256
-			ld (trb_play), hl
-			
-			pop	 hl						
-			ret							; 4+4+13+4+13+10+16+10+10=84
-			// total for pause: 94+41+84=219t
-
-endtrack	//end of track
-			pop	 hl
-			jr mus_init
-			// total: 103+41+5+10+12=171t
 
 			//play note
 trb_play	
@@ -136,20 +102,27 @@ after_play_frame
 			SAVE_POS 0						; 38
 			dec	 l
 trb_rep		dec	 l
-			dec	 (hl)
-			jp	 m, rest_value
-			ret nz							
-			// end of repeat, restore position in track
+			ld	 a,(hl)
+			sub	 1
+			jr	 nz, continue_rep
 trb_rest	dec	 l
 			dec	 l
 			ld	 (pl_track+1), hl
 			ret								; 4+11+5+4+7+13+10=54
 			// total: 28+17+38+54=137t + pl0x time(661t) = 798t(max)
-rest_value			
-			inc (hl)
+continue_rep
+			ret	 c
+			ld	 (hl),a
 			ret
 
+endtrack	//end of track
+			pop	 hl
+			jr mus_init
+			// total: 103+41+5+10+12=171t
+
 same_level_ref
+			ld a, (de)			
+			inc de		
 			ld	 (hl),a
 			jr continue_ref
 
@@ -164,13 +137,15 @@ pl11
 			ex	de,hl
 			ld  hl, (pl_track+1)
 			dec	 l
-			dec (hl)
+			ld	 a,(hl)
+			sub	 1
+			jr	 z, same_level_ref
+			jp	 c, nested_ref
+			ld (hl), a
+nested_ref
 			ld a, (de)			
 			inc de		
-			jr	 z, same_level_ref
-			jp	 p, nested_ref
-			inc	 (hl)
-nested_ref
+
 			//SAVE_POS 0					; 7+6+38=51
 				//ex	de,hl
 				//ld	hl, (pl_track+1)
@@ -198,38 +173,74 @@ continue_ref
 			ret							; 17+38+10=65
 			// total: 28+5+36+51+31+26+65=242t + pl0x time (661)=903t
 
-pl00		sub 120						; 28+17+21+5=71 on enter
-			jr nc, pl_pause
-		//psg1
-			// 2 registr - maximum, second without check
-			ld a, (hl)
+single_pause
+			pop	 de
+			jp	 after_play_frame
+long_pause
+			inc	 hl
+			ld	 a, (hl)
 			inc hl
-			rrca
-			jr nc, 7f					; 7+7+7+6+4+7=38
-			ex de, hl
-			add	 a
-			add	 a
-mus_low		add	 0
-			ld	 l, a
-mus_high	adc	 0
-			sub	 l
-			ld	 h, a					; 4+4+4+7+4+7+4+4=38
+			jr	 pause_cont
+pl_pause	and	 #0f
+			inc hl
+			jr z, single_pause
+pause_cont	SAVE_POS 0					; 40
+			//set pause
+			ld (pause_rep), a	
+			
+			dec	 l
+			ld  a, l
+			ld (saved_track+2), a
 
-			outi
-			ld b, #bf
-			outi
-			ld b, #ff
-			outi
-			ld b, #bf
-			outi
-			ex	 de, hl
-			ret							; 16+(7+16)*3+4+10=99
-			; total: 38+38+99=175
-7			out (c),a
+			ld hl, JR_CODE + (trb_pause - trb_play - 2) * 256
+			ld (trb_play), hl
+			
+			pop	 hl						
+			ret							; 4+4+13+4+13+10+16+10+10=84
+			// total for pause: 94+41+84=219t
+
+pause_or_psg1
+			add	 a
+			ld a, (hl)
+			jr c, pl_pause
+			jr z, long_pause
+		//psg1 or end of track
+			cp #0f
+			jr z, endtrack
+			dec a	 
+			inc hl
+
+			out (c),a
 			ld b, #bf
 			outi
 			ret							; 12+7+16+10=45
-			; total: 38+5+45=88
+
+pl00		add	 a
+			jr	 nc, pause_or_psg1
+			ld de, #05bf
+		// psg2i
+			rrca:rrca						; 4+5+10+4=23
+
+			exx
+mus_low		add	 0
+			ld	 e, a
+mus_high	adc	 0
+			sub	 e
+			ld	 d, a					
+			ld	 a,(de)
+			inc	 de
+			exx							
+			inc	 hl						; 4+7+4+7+4+4+7+6+4+6=53
+			call reg_left_6
+
+			exx
+			ld	 a, (de)
+			exx
+			add a
+			ld b,#ff
+			jp play_by_mask_13_6
+
+			; total: 5+23+47+27+25 - 6-10-7-6-7-7-10 = 74 (longer that PSG2)
 
 pl10
 			SAVE_POS 0
@@ -267,9 +278,9 @@ play_by_mask_0_5
 			ld b,e
 			outi					; 4+7+12+4+16=43
 
-			ld a, (hl)
+second_mask	ld a, (hl)
 			inc hl					
-			add a
+before_6    add a
 			jr z,play_all_6_13		; 7+6+4+7=24
 			// total: 44+202+43+24+5=318  (till play_all_6_13)
 			ld b,#ff
@@ -329,7 +340,25 @@ play_by_mask_13_6
 			outi					
 			ld b,#ff				;  7+7+12+4+16+7=53
 1			
-			dup 6
+
+			dec d
+			add a
+			jr c,1f
+			out (c),d
+			ld b,e
+			outi				
+			ld b,#ff
+1			
+
+			dec d
+reg_left_6	add a
+			jr c,1f
+			out (c),d
+			ld b,e
+			outi				
+			ld b,#ff
+1			
+			dup 4
 				dec d
 				add a
 				jr c,1f
@@ -350,6 +379,7 @@ play_by_mask_13_6
 			// total: 318 + 330 = 648 (all_0_5 + mask_6_13)
 			// total: 325 + 330 = 655 (mask_0_5 + mask_6_13)
 
+pause_rep	db 0
 stack_pos	
 			dup MAX_NESTED_LEVEL		// Make sure packed file has enough nested level here
 			DB 0,0,0
