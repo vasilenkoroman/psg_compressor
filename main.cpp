@@ -131,6 +131,7 @@ struct Stats
     std::map<int, int> maskToUsage;
     std::multimap<int, int> usageToMask;
     std::map<int, int> maskIndex;
+    CompressionLevel level = CompressionLevel::l1;
 };
 
 bool isPsg2(const RegMap& regs, uint16_t symbol, const Stats& stats)
@@ -138,26 +139,60 @@ bool isPsg2(const RegMap& regs, uint16_t symbol, const Stats& stats)
     return regs.size() > 1;
 }
 
+struct RefInfo
+{
+    int refTo = 0;
+    int refLen = 0;
+    int level = 0;
+    int offsetInRef = 0;
+};
+
 class TimingsHelper
 {
 private:
     const Stats& m_stats;
+    const std::vector<RefInfo>& m_refInfo;
 public:
-    TimingsHelper(const Stats& stats) : m_stats(stats) {}
+    TimingsHelper(const Stats& stats, const std::vector<RefInfo>& refInfo):
+        m_stats(stats),
+        m_refInfo(refInfo)
+    {
+    }
 
     int trbRepTimings(int trdRep)
     {
-        if (trdRep == 0)
-            return 7 + 4 + 11;
-        int result = 7 + 4 + 5;
-        if (trdRep > 1)
+        if (m_stats.level < 4)
         {
-            result += 13 + 11;
+            if (trdRep == 0)
+                return 7 + 4 + 11;
+            int result = 7 + 4 + 5;
+            if (trdRep > 1)
+            {
+                result += 13 + 11;
+                return result;
+            }
+
+            result += 13 + 5 + 42;
             return result;
         }
+        else
+        {
+            if (trdRep != 1)
+                return 4 + 11 + 11;
+            return 20+34;
+        }
+    }
 
-        result += 13 + 5 + 42;
-        return result;
+    int frameTimings(const RegMap& regs, int trbRep, uint16_t symbol)
+    {
+        int result = 28 + 17;  //< before pl_frame
+        result += pl0xTimings(regs, symbol);
+        if (m_stats.level < 4)
+            result += 16;
+        else
+            result += 5 + 59;
+
+        return result + trbRepTimings(trbRep);
     }
 
     int pause_cont()
@@ -327,35 +362,25 @@ public:
 
     int shortRefTimings(const RegMap& regs, uint16_t symbol)
     {
-        int result = 115;
+        int result = m_stats.level >= 4 ? 136 : 115;
         result += TimingsHelper::pl0xTimings(regs, symbol);
         return result;
     }
 
-    int longRefInitTiming(const RegMap& regs, uint16_t symbol)
+    int longRefInitTiming(int pos, const RegMap& regs, uint16_t symbol, int symbolsLeftAtLevel)
     {
-        int result = 170;
+        int result = m_stats.level >= 4 ? 253 : 170;
+
+        if (m_stats.level >= 4 && symbolsLeftAtLevel > 0)
+        {
+            if (m_refInfo[pos].refLen == symbolsLeftAtLevel)
+            {
+                // same level ref
+                result -= 26 - 5;
+            }
+        }
+
         result += TimingsHelper::pl0xTimings(regs, symbol);
-        return result;
-    }
-
-    int frameTimings(const RegMap& regs, int trbRep, uint16_t symbol)
-    {
-        int result = 28; //< before pl_frame
-        result += pl0xTimings(regs, symbol);
-        result += 33; //< before trb_rep
-
-        if (trbRep == 0)
-        {
-            result += 7 + 4 + 11;
-            return result;
-        }
-        if (trbRep > 1)
-        {
-            result += 34 + (11 - 5);
-            return result;
-        }
-        result += 34 + 42;
         return result;
     }
 };
@@ -364,7 +389,7 @@ class PgsPacker
 {
 public:
 
-    PgsPacker(): th(stats) {}
+    PgsPacker(): th(stats, refInfo) {}
 
     struct FrameInfo
     {
@@ -390,23 +415,14 @@ public:
     Stats stats;
     TimingsHelper th;
 
-    struct RefInfo
-    {
-        int refTo = 0;
-        int refLen = 0;
-        int level = 0;
-        int offsetInRef = 0;
-    };
-
     std::vector<uint8_t> srcPsgData;
     std::vector<uint8_t> updatedPsgData;
     std::vector<uint8_t> compressedData;
-    std::vector<RefInfo> refCount;
+    std::vector<RefInfo> refInfo;
     std::vector<int> frameOffsets;
     int flags = kDefaultFlags;
     bool firstFrame = false;
     std::vector<int> timingsData;
-    CompressionLevel level = CompressionLevel::l1;
 
 private:
 
@@ -626,9 +642,9 @@ private:
             }
         }
 
-        if (level < l3)
+        if (stats.level < l3)
             extendToFullChangeIfNeed(5, 5);
-        else if (level == l4)
+        else if (stats.level == l4)
             extendToFullChangeIfNeed(5, 6);
 
         uint16_t symbol = toSymbol(changedRegs);
@@ -705,7 +721,7 @@ private:
         int offset = frameOffsets[pos];
         int recordSize = reducedLen == 1 ? 2 : 3;
         int16_t delta = offset - compressedData.size() - recordSize;
-        if (reducedLen > 1 && level < CompressionLevel::l4)
+        if (reducedLen > 1 && stats.level < CompressionLevel::l4)
                ++delta;
         assert(delta < 0);
 
@@ -730,17 +746,23 @@ private:
         return th.shortRefTimings(regs, symbol);
     }
 
-    int longRefInitTiming(int pos)
+    int longRefInitTiming(int pos, int symbolsLeftAtLevel)
     {
         auto symbol = ayFrames[pos].symbol;
         auto regs = symbolToRegs[symbol];
-        return th.longRefInitTiming(regs, symbol);
+        return th.longRefInitTiming(pos, regs, symbol, symbolsLeftAtLevel);
     }
 
     bool isNestedShortRef(int pos)
     {
-        // TODO: implement me
-        return false;
+        bool result = refInfo[pos].refLen == 1;
+        return result;
+    }
+
+    bool isNestedLongRefStart(int pos)
+    {
+        bool result = refInfo[pos].refLen > 1 && refInfo[pos].offsetInRef == 0;
+        return result;
     }
 
     void serializeRefTimings(int pos, int len, int reducedLen)
@@ -751,7 +773,7 @@ private:
             return;
         }
 
-        timingsData.push_back(longRefInitTiming(pos)); // First frame
+        timingsData.push_back(longRefInitTiming(pos, 0)); // First frame
         --reducedLen;
         for (int j = 1; j < len; ++j)
         {
@@ -765,6 +787,11 @@ private:
             else if (isNestedShortRef(pos))
             {
                 timingsData.push_back(shortRefTiming(pos));
+            }
+            else if (isNestedLongRefStart(pos))
+            {
+                int symbolsLeftAtLevel = len - j;
+                timingsData.push_back(longRefInitTiming(pos, symbolsLeftAtLevel));
             }
             else
             {
@@ -893,7 +920,7 @@ private:
         if (master.symbol == slave.symbol)
             return true;
 
-        if (level < l1)
+        if (stats.level < l1)
             return false;
 
         if (slave.symbol <= kMaxDelay || master.delta.size() < slave.delta.size())
@@ -927,14 +954,14 @@ private:
         int bestBenifit = 0;
         int maxReducedLen = -1;
         
-        int maxAllowedReducedLen = level < l4 ? 128 : 255;
+        int maxAllowedReducedLen = stats.level < l4 ? 128 : 255;
 
         for (int i = 0; i < pos; ++i)
         {
             if (frameOffsets[pos] - frameOffsets[i] + 3 > kMaxRefOffset)
                 continue;
 
-            if (isFrameCover(ayFrames[i], ayFrames[pos]) && refCount[i].refLen == 0)
+            if (isFrameCover(ayFrames[i], ayFrames[pos]) && refInfo[i].refLen == 0)
             {
                 int chainLen = 0;
                 int reducedLen = 0;
@@ -943,10 +970,10 @@ private:
                 
                 for (int j = 0; j < maxLength && i + j < pos && reducedLen < maxAllowedReducedLen; ++j)
                 {
-                    if ((refCount[i + j].refLen > 1 && level < l4) || !isFrameCover(ayFrames[i + j], ayFrames[pos + j]))
+                    if ((refInfo[i + j].refLen > 1 && stats.level < l4) || !isFrameCover(ayFrames[i + j], ayFrames[pos + j]))
                         break;
                     ++chainLen;
-                    const auto& ref = refCount[i + j];
+                    const auto& ref = refInfo[i + j];
                     if (ref.refLen == 0  || (ref.refLen > 1 && ref.offsetInRef == 0))
                     {
                         ++reducedLen; //< Don't count 1-symbol refs during ref serialization
@@ -957,8 +984,8 @@ private:
                 }
 
                 bool truncateLastRef2 = false;
-                while (chainLen > 0 && refCount[i + chainLen - 1].refLen > 1 
-                    && refCount[i + chainLen - 1].offsetInRef < refCount[i + chainLen - 1].refLen-1)
+                while (chainLen > 0 && refInfo[i + chainLen - 1].refLen > 1
+                    && refInfo[i + chainLen - 1].offsetInRef < refInfo[i + chainLen - 1].refLen-1)
                 {
                     sizes.pop_back();
                     --chainLen;
@@ -967,7 +994,7 @@ private:
                 if (truncateLastRef2)
                     --reducedLen;
 
-                while (chainLen > 0 && refCount[i + chainLen - 1].refLen == 1)
+                while (chainLen > 0 && refInfo[i + chainLen - 1].refLen == 1)
                 {
                     sizes.pop_back();
                     --chainLen;
@@ -984,7 +1011,7 @@ private:
                 }
             }
         }
-        if (level < l2)
+        if (stats.level < l2)
         {
             if (maxChainLen > 1)
             {
@@ -1005,12 +1032,12 @@ public:
 
     void updateRefInfo(int i, int pos, int len)
     {
-        refCount[i].refTo = pos;
+        refInfo[i].refTo = pos;
         for (int j = i; j < i + len; ++j)
         {
-            assert(refCount[j].refLen == 0);
-            refCount[j].refLen = len;
-            refCount[j].offsetInRef = j - i;
+            assert(refInfo[j].refLen == 0);
+            refInfo[j].refLen = len;
+            refInfo[j].offsetInRef = j - i;
         }
         if (len > 1)
             updateNestedLevel(pos, len, 1);
@@ -1019,11 +1046,11 @@ public:
     void updateNestedLevel(int pos, int len, int level)
     {
         for (int j = pos; j < pos + len; ++j)
-            refCount[j].level = std::max(refCount[j].level, level);
+            refInfo[j].level = std::max(refInfo[j].level, level);
         for (int j = pos; j < pos + len; ++j)
         {
-            if (refCount[j].refTo && refCount[j].refLen > 1)
-                updateNestedLevel(refCount[j].refTo, refCount[j].refLen, level+1);
+            if (refInfo[j].refTo && refInfo[j].refLen > 1)
+                updateNestedLevel(refInfo[j].refTo, refInfo[j].refLen, level+1);
         }
     }
 
@@ -1144,7 +1171,7 @@ public:
         }
 
         // compressData
-        refCount.resize(ayFrames.size());
+        refInfo.resize(ayFrames.size());
 
         for (int i = 0; i < ayFrames.size();)
         {
@@ -1238,7 +1265,7 @@ public:
     int maxNestedLevel() const 
     {
         int result = 0;
-        for (const auto& ref : refCount)
+        for (const auto& ref : refInfo)
             result = std::max(result, ref.level);
         return result;
     }       
@@ -1258,7 +1285,7 @@ int main(int argc, char** argv)
 {
     PgsPacker packer;
 
-    std::cout << "Fast PSG packer v.0.7b" << std::endl;
+    std::cout << "Fast PSG packer v.0.8b" << std::endl;
     if (argc < 3)
     {
         std::cout << "Usage: psg_pack [OPTION] input_file output_file" << std::endl;
@@ -1268,11 +1295,12 @@ int main(int argc, char** argv)
         std::cout << "Options:" << std::endl;
         std::cout << "-l, --level\t Compression level:" << std::endl;
 
-        std::cout << "\t0\tMaximum speed. Max frame time=799t" << std::endl;
-        std::cout << "\t1\tSame max frame time, avarage frame size worse a little bit, better compression" << std::endl;
-        std::cout << "\t2\tMax frame time about 827t, better compression" << std::endl;
-        std::cout << "\t3\tMax frame time above 900t, better compression" << std::endl;
-        std::cout << "\t4\tMax frame time above 1000t, signitifally better compression. Requires 'slow_psg_player.asm'" << std::endl;
+        std::cout << "\t  0\tMaximum speed. Max frame time=799t" << std::endl;
+        std::cout << "\t* 1\tSame max frame time, avarage frame size worse a little bit, better compression (default)" << std::endl;
+        std::cout << "\t  2\tMax frame time about 827t, better compression" << std::endl;
+        std::cout << "\t  3\tMax frame time above 900t, better compression" << std::endl;
+        std::cout << "\t* 4\tMax frame time up to 948t, signitifally better compression. Requires 'l4_psg_player.asm'" << std::endl;
+        std::cout << "\t  5\tMax frame time up to 1016t, a bit better compression. Requires 'l4_psg_player.asm'" << std::endl;
 
         std::cout << "-c, --clean\t Clean AY registers before packing. Improve compression level but incompatible with some tracks." << std::endl;
         std::cout << "-k, --keep\t --Don't clean AY regiaters." << std::endl;
@@ -1292,12 +1320,12 @@ int main(int argc, char** argv)
                 return -1;
             }
             int value = atoi(argv[i + 1]);
-            if (value < 0 || value > 4)
+            if (value < 0 || value > 5)
             {
-                std::cerr << "Invalid compression level " << value << ". Expected value in range [0..4]" << std::endl;
+                std::cerr << "Invalid compression level " << value << ". Expected value in range [0..5]" << std::endl;
                 return -1;
             }
-            packer.level = (CompressionLevel) value;
+            packer.stats.level = (CompressionLevel) value;
         }
         if (hasShortOpt(s, 'c') || s == "--clean")
         {
@@ -1319,7 +1347,7 @@ int main(int argc, char** argv)
 
     using namespace std::chrono;
 
-    std::cout << "Starting compression at level " << packer.level << std::endl;
+    std::cout << "Starting compression at level " << packer.stats.level << std::endl;
     auto timeBegin = std::chrono::steady_clock::now();
     auto result = packer.parsePsg(argv[argc-2]);
     if (result == 0)
@@ -1342,7 +1370,7 @@ int main(int argc, char** argv)
     std::cout << "Empty frames:\t" << packer.stats.emptyCnt << std::endl;
     std::cout << "Frames in refs:\t" << packer.stats.allRepeatFrames << std::endl;
     std::cout << "Total frames:\t" << packer.stats.psgFrames << std::endl;
-    if (packer.level >= 4)
+    if (packer.stats.level >= 4)
         std::cout << "Nested level:\t" << packer.maxNestedLevel() << std::endl;
     
 
@@ -1360,8 +1388,6 @@ int main(int argc, char** argv)
     }
 
     std::string comment;
-    if (packer.level == CompressionLevel::l4)
-        comment = " (+ nested ref timings, not calculated yet)";
     std::cout << "The longest frame: " << t << "t" << comment << ", pos " << pos << ". Avarage frame: " << totalTicks / (packer.timingsData.size()) << "t" << std::endl;
 
     return 0;

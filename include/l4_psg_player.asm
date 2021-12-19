@@ -1,11 +1,11 @@
-//player for TBK PSG Packer
-//psndcj//tbk - 11.02.2012,01.12.2013
-//source for sjasm cross-assembler
-//modified by physic 8.12.2021
-//Max time is reduced from 1089t to 799t (-290t)
-//Player size is increased from 348 to 470 bytes (+122 bytes)
-
 /*
+Player for Fast PSG Packer for compression levels [4..5]
+Source for sjasm cross-assembler.
+Source code is based on psndcj/tbk player and bfox/introspec player.
+Modified by physic 8.12.2021.
+Max time is 948t for compression level 4 (recomended), 1016t for compression level 5
+Player size is increased from 348 to 485 bytes.
+
 11hhhhhh llllllll nnnnnnnn	3	CALL_N - вызов с возвратом для проигрывания (nnnnnnnn + 1) значений по адресу 11hhhhhh llllllll
 10hhhhhh llllllll			2	CALL_1 - вызов с возвратом для проигрывания одного значения по адресу 11hhhhhh llllllll
 01MMMMMM mmmmmmmm			2+N	PSG2 проигрывание, где MMMMMM mmmmmmmm - инвертированная битовая маска регистров, далее следуют значения регистров.
@@ -18,13 +18,8 @@
 00000000 nnnnnnnn			2	PAUSE_N - пауза nnnnnnnn+1 фреймов (ничего не выводим в регистры)
 
 
-Также эта версия частично поддерживает короткие вложенные ссылки уровня 2 (доп. ограничение - они не могут стоять в конце длинной ссылки уровня 1).
-По-умолчанию пакер избегает пакованных фреймов, когда заполнены 5/6 регистров [0..5] или 5/7, 6/7 регистров [6..12]. В этом случае записывается "лишний" регистр(ы).
-Т.о. проигрывание идет по ветке play_all_xx, что быстрее.
-Дополнительно, эта же опция пакера избегает сочетания "заполнены все регистры(в том числе после заливки доп. регистров) + ссылка длиной более 1 байт".
-Все это несколько ухудшает сжатие, но за счет частичной поддержки вложенных ссылок, оно остается на уровне оригинального плейера.
-Максимальные тайминги расчитаны при уровне компрессии 1 (по-умолчанию).
-Лупинг также не выходит за пределы макс. расчитанных таймингов, но формирует отдельную запись проигрывания, т.е. есть задержка между последним и 1-м фреймом трека в 1 frame.
+Nested loops are fully supported at this version. Please make sure there is enough room for nested levels.
+Packer shows max nested level. It need to increase MAX_NESTED_LEVEL variable if it not enough.
 */
 
 MAX_NESTED_LEVEL EQU 4
@@ -91,18 +86,18 @@ endtrack	//end of track
 pl_frame	call pl0x						; 17
 after_play_frame
 			xor	 a
-			ld	 (stack_pos), a				;4+13=17
+			ld	 (stack_pos), a				
 			SAVE_POS 						
-			dec	 l
+			dec	 l							; 4+13+38+4=59
 trb_rep		dec	 l
 			dec (hl)
-			ret	 nz							; 38+4+4+11+5=62
+			ret	 nz							; 4+11+5=20
 trb_rest	
 			dec	 l
 			dec	 l
 			ld	 (pl_track+1), hl
 			ret								; 4+4+16+10=34
-			// total: 28+5+17+17+62+34=163t + pl0x time(661t) = 824t(max)
+			// total: 28+5+17+59+20+34=163  + pl0x time(661t) = 824t(max)
 
 trb_play	
 pl_track	ld hl, (stack_pos+1)
@@ -130,12 +125,12 @@ nested_ref
 			ld	(hl),e
 			inc	l
 			ld	(hl),d
-			inc  l						
+			inc  l						; 4+7+4+7+4+=26
 same_level_ref
 			ld	 (hl),a
 			inc	 l
 			// update nested level
-			ld	 (pl_track+1),hl		; 4+7+4+7+4+7+4+16=53
+			ld	 (pl_track+1),hl		; 7+4+16=27
 
 			ex	de,hl					
 			add hl, bc	
@@ -146,7 +141,7 @@ same_level_ref
 			// Save pos for the new nested level
 			SAVE_POS 					; 38
 			ret							; 17+38+10=65
-			// total: 28+36+55+53+26+17+38=253t + pl0x time (661)=914t
+			// total: 28+36+55+26+27+26+17+38=253t + pl0x time (661)=914t
 
 single_pause
 			pop	 de
@@ -223,14 +218,14 @@ mus_high	adc	 0
 			; total: 5+23+47+27+25 - 6-10-7-6-7-7-10 = 74 (longer that PSG2)
 
 pl10
-			SAVE_POS 
+			SAVE_POS 					; 38
 			ex	de,hl
 			set 6, b
 			add hl, bc
 
 			ld a, (hl)
-			add a		            	; 16+8+11+7+4=46t
-			// total: 28+5+36+46=115t + pl0x time(661t) = 776t(max)
+			add a		            	; 4+8+11+7+4=34
+			// total: 28+36+38+34=136t  + pl0x time(661t) = 797t(max)
 
 pl0x		ld bc, #fffd				
 			add a					
