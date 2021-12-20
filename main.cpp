@@ -142,6 +142,7 @@ bool isPsg2(const RegMap& regs, uint16_t symbol, const Stats& stats)
 struct RefInfo
 {
     int refTo = 0;
+    int reducedLen = 0;
     int refLen = 0;
     int level = 0;
     int offsetInRef = 0;
@@ -786,6 +787,20 @@ private:
             return;
         }
 
+        std::vector<int> lenStack;
+
+        auto decLen = 
+            [&]()
+            {
+                --reducedLen;
+                if (reducedLen == 0 && !lenStack.empty())
+                {
+                    reducedLen = *lenStack.rbegin();
+                    lenStack.pop_back();
+                }
+            };
+
+
         timingsData.push_back(longRefInitTiming(pos, 0)); // First frame
         --reducedLen;
         for (int j = 1; j < len; ++j)
@@ -795,7 +810,7 @@ private:
             if (symbol <= kMaxDelay)
             {
                 serializeDelayTimings(symbol, reducedLen);
-                --reducedLen;
+                decLen();
             }
             else if (isNestedShortRef(pos))
             {
@@ -805,13 +820,24 @@ private:
             {
                 int symbolsLeftAtLevel = len - j;
                 timingsData.push_back(longRefInitTiming(pos, symbolsLeftAtLevel));
+                decLen();
+                if (reducedLen == 0)
+                {
+                    reducedLen = refInfo[pos].reducedLen;
+                }
+                else 
+                {
+                    lenStack.push_back(reducedLen);
+                    reducedLen = refInfo[pos].reducedLen;
+                }
+
             }
             else
             {
                 auto regs = symbolToRegs[symbol];
                 int result = th.frameTimings(regs, reducedLen, symbol);
                 timingsData.push_back(result);
-                --reducedLen;
+                decLen();
             }
         }
     }
@@ -1043,9 +1069,10 @@ private:
 
 public:
 
-    void updateRefInfo(int i, int pos, int len)
+    void updateRefInfo(int i, int pos, int len, int reducedLen)
     {
         refInfo[i].refTo = pos;
+        refInfo[i].reducedLen = reducedLen;
         for (int j = i; j < i + len; ++j)
         {
             assert(refInfo[j].refLen == 0);
@@ -1206,8 +1233,7 @@ public:
                 if (len > 0)
                 {
                     serializeRef(pos, len, reducedLen);
-
-                    updateRefInfo(i, pos, len);
+                    updateRefInfo(i, pos, len, reducedLen - 1);
 
                     i += len;
                     if (len == 1)
