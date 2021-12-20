@@ -13,6 +13,8 @@ static const int kMaxDelay = 256;
 static const int kMaxRefOffset = 16384;
 static const int kPsg2iSize = 32;
 
+static const int kMaxTimeForL4 = 964;
+
 enum Flags
 {
     none = 0,
@@ -425,6 +427,7 @@ public:
     RegVector prevEnvelopePeriod;
     RegVector prevEnvelopeForm;
     RegVector prevNoisePeriod;
+    std::map<int, int> symbolsToInflate;
 
     Stats stats;
     TimingsHelper th;
@@ -656,10 +659,10 @@ private:
             }
         }
 
-        if (stats.level < l3)
+        if (stats.level < l3 || symbolsToInflate.count(toSymbol(changedRegs)))
             extendToFullChangeIfNeed(5, 5);
-        else if (stats.level == l4)
-            extendToFullChangeIfNeed(5, 6);
+        //else if (stats.level == l4)
+        //    extendToFullChangeIfNeed(5, 6);
 
         uint16_t symbol = toSymbol(changedRegs);
         ayFrames.push_back({ symbol, lastCleanedRegs, changedRegs }); //< Flush previous frame.
@@ -730,7 +733,13 @@ private:
 
     void serializeRef(uint16_t pos, int len, uint8_t reducedLen)
     {
-        serializeRefTimings(pos, len, reducedLen);
+        int refTiming = serializeRefTimings(pos, len, reducedLen);
+        if (stats.level == CompressionLevel::l4)
+        {
+            const auto symbol = ayFrames[pos].symbol;
+            if (refTiming > kMaxTimeForL4)
+                ++symbolsToInflate[symbol];
+        }
 
         int offset = frameOffsets[pos];
         int recordSize = reducedLen == 1 ? 2 : 3;
@@ -779,12 +788,12 @@ private:
         return result;
     }
 
-    void serializeRefTimings(int pos, int len, int reducedLen)
+    int serializeRefTimings(int pos, int len, int reducedLen)
     {
         if (len == 1)
         {
             timingsData.push_back(shortRefTiming(pos)); // First frame
-            return;
+            return *timingsData.rbegin();
         }
 
         std::vector<int> lenStack;
@@ -801,7 +810,8 @@ private:
             };
 
 
-        timingsData.push_back(longRefInitTiming(pos, 0)); // First frame
+        int result = longRefInitTiming(pos, 0);
+        timingsData.push_back(result); // First frame
         --reducedLen;
         for (int j = 1; j < len; ++j)
         {
@@ -840,6 +850,7 @@ private:
                 decLen();
             }
         }
+        return result;
     }
 
     void serializeFrame(uint16_t pos)
@@ -1320,9 +1331,49 @@ bool hasShortOpt(const std::string& s, char option)
     return s.find(option) != std::string::npos;
 }
 
+int parseArgs(int argc, char** argv, PgsPacker* packer)
+{
+    for (int i = 1; i < argc - 2; ++i)
+    {
+        const std::string s = argv[i];
+        if (hasShortOpt(s, 'l') || s == "--level")
+        {
+            if (i == argc - 1)
+            {
+                std::cerr << "It need to define compression leven in range [0..4] after argument '--level'" << std::endl;
+                return -1;
+            }
+            int value = atoi(argv[i + 1]);
+            if (value < 0 || value > 5)
+            {
+                std::cerr << "Invalid compression level " << value << ". Expected value in range [0..5]" << std::endl;
+                return -1;
+            }
+            packer->stats.level = (CompressionLevel)value;
+        }
+        if (hasShortOpt(s, 'c') || s == "--clean")
+        {
+            packer->flags |= cleanRegs;
+        }
+        if (hasShortOpt(s, 'k') || s == "--keep")
+        {
+            packer->flags &= ~cleanRegs;
+        }
+        if (hasShortOpt(s, 'd') || s == "--dump")
+        {
+            packer->flags |= dumpPsg;
+        }
+        if (hasShortOpt(s, 'i') || s == "--info")
+        {
+            packer->flags |= dumpTimings;
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
-    PgsPacker packer;
+    std::unique_ptr<PgsPacker> packer(new PgsPacker());
 
     std::cout << "Fast PSG packer v.0.8b" << std::endl;
     if (argc < 3)
@@ -1348,86 +1399,70 @@ int main(int argc, char** argv)
         return -1;
     }
 
-    for (int i = 1; i < argc - 2; ++i)
-    {
-        const std::string s = argv[i];
-        if (hasShortOpt(s,'l') || s == "--level")
-        {
-            if (i == argc - 1)
-            {
-                std::cerr << "It need to define compression leven in range [0..4] after argument '--level'" << std::endl;
-                return -1;
-            }
-            int value = atoi(argv[i + 1]);
-            if (value < 0 || value > 5)
-            {
-                std::cerr << "Invalid compression level " << value << ". Expected value in range [0..5]" << std::endl;
-                return -1;
-            }
-            packer.stats.level = (CompressionLevel) value;
-        }
-        if (hasShortOpt(s, 'c') || s == "--clean")
-        {
-            packer.flags |= cleanRegs;
-        }
-        if (hasShortOpt(s, 'k') || s == "--keep")
-        {
-            packer.flags &= ~cleanRegs;
-        }
-        if (hasShortOpt(s, 'd') || s == "--dump")
-        {
-            packer.flags |= dumpPsg;
-        }
-        if (hasShortOpt(s, 'i') || s == "--info")
-        {
-            packer.flags |= dumpTimings;
-        }
-    }
+    int result = parseArgs(argc, argv, packer.get());
+    if (result != 0)
+        return result;
 
     using namespace std::chrono;
 
-    std::cout << "Starting compression at level " << packer.stats.level << std::endl;
+    std::cout << "Starting compression at level " << packer->stats.level << std::endl;
     auto timeBegin = std::chrono::steady_clock::now();
-    auto result = packer.parsePsg(argv[argc-2]);
+    result = packer->parsePsg(argv[argc-2]);
     if (result == 0)
-        result = packer.packPsg(argv[argc - 1]);
+        result = packer->packPsg(argv[argc - 1]);
     if (result != 0)
         return result;
-    if (packer.flags & dumpPsg)
-        packer.writeRawPsg(std::string(argv[argc - 1]) + ".psg");
-    if (packer.flags & dumpTimings)
-        packer.writeTimingsFile(std::string(argv[argc - 1]) + ".csv");
+    if (!packer->symbolsToInflate.empty())
+    {
+        // Timings are fail. Pack again.
+        auto backup = packer->symbolsToInflate;
+        packer.reset(new PgsPacker());
+        parseArgs(argc, argv, packer.get());
+        packer->symbolsToInflate = backup;
+
+        result = packer->parsePsg(argv[argc - 2]);
+        if (result == 0)
+            result = packer->packPsg(argv[argc - 1]);
+        if (result != 0)
+            return result;
+    }
+
+
+    if (packer->flags & dumpPsg)
+        packer->writeRawPsg(std::string(argv[argc - 1]) + ".psg");
+    if (packer->flags & dumpTimings)
+        packer->writeTimingsFile(std::string(argv[argc - 1]) + ".csv");
 
     auto timeEnd = steady_clock::now();
 
     std::cout << "Compression done in " << duration_cast<milliseconds>(timeEnd - timeBegin).count() / 1000.0 << " second(s)" << std::endl;
-    std::cout << "Input size:\t" << packer.srcPsgData.size() << std::endl;
-    std::cout << "Packed size:\t" << packer.compressedData.size() << std::endl;
-    std::cout << "1-byte refs:\t" << packer.stats.singleRepeat << std::endl;
-    std::cout << "Total refs:\t" << packer.stats.allRepeat << std::endl;
-    std::cout << "Packed frames:\t" << packer.ayFrames.size() << std::endl;
-    std::cout << "Empty frames:\t" << packer.stats.emptyCnt << std::endl;
-    std::cout << "Frames in refs:\t" << packer.stats.allRepeatFrames << std::endl;
-    std::cout << "Total frames:\t" << packer.stats.psgFrames << std::endl;
-    if (packer.stats.level >= 4)
-        std::cout << "Nested level:\t" << packer.maxNestedLevel() << std::endl;
+    std::cout << "Input size:\t" << packer->srcPsgData.size() << std::endl;
+    std::cout << "Packed size:\t" << packer->compressedData.size() << std::endl;
+    std::cout << "1-byte refs:\t" << packer->stats.singleRepeat << std::endl;
+    std::cout << "Total refs:\t" << packer->stats.allRepeat << std::endl;
+    std::cout << "Packed frames:\t" << packer->ayFrames.size() << std::endl;
+    std::cout << "Empty frames:\t" << packer->stats.emptyCnt << std::endl;
+    std::cout << "Frames in refs:\t" << packer->stats.allRepeatFrames << std::endl;
+    std::cout << "Total frames:\t" << packer->stats.psgFrames << std::endl;
+    if (packer->stats.level >= 4)
+        std::cout << "Nested level:\t" << packer->maxNestedLevel() << std::endl;
     
 
     int pos = 0;
     int t = 0;
     int totalTicks = 0;
-    for (int i = 0; i < packer.timingsData.size(); ++i)
+    for (int i = 0; i < packer->timingsData.size(); ++i)
     {
-        if (packer.timingsData[i] > t)
+        if (packer->timingsData[i] > t)
         {
             pos = i;
-            t = packer.timingsData[i];
+            t = packer->timingsData[i];
         }
-        totalTicks += packer.timingsData[i];
+        totalTicks += packer->timingsData[i];
     }
 
     std::string comment;
-    std::cout << "The longest frame: " << t << "t" << comment << ", pos " << pos << ". Avarage frame: " << totalTicks / (packer.timingsData.size()) << "t" << std::endl;
+    std::cout << "The longest frame: " << t << "t" << comment << ", pos " << pos << ". Avarage frame: " << totalTicks / (packer->timingsData.size()) << "t" << std::endl;
 
     return 0;
 }
