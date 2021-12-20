@@ -4,7 +4,7 @@ Source for sjasm cross-assembler.
 Source code is based on psndcj/tbk player and bfox/introspec player.
 Modified by physic 8.12.2021.
 Max time is 964t for compression level 4 (recomended), 1016t for compression level 5
-Player size is increased from 348 to 485 bytes.
+Player size is increased from 348 to 544 bytes.
 
 11hhhhhh llllllll nnnnnnnn	3	CALL_N - вызов с возвратом для проигрывания (nnnnnnnn + 1) значений по адресу 11hhhhhh llllllll
 10hhhhhh llllllll			2	CALL_1 - вызов с возвратом для проигрывания одного значения по адресу 11hhhhhh llllllll
@@ -222,7 +222,13 @@ pl10
 
 			ld a, (hl)
 			add a		            	; 4+8+11+7+4=34
-			// total: 34+36+38+34=142t  + pl0x time(661t) = 803t(max)
+			
+			call pl0x
+			ld	hl, (pl_track+1)
+			jp trb_rep				; 17+16+10=43
+									; trb_rep=54
+			// total:  142+43+54=239t  + pl0x time(661t) = 900t(max)
+
 
 pl0x		ld bc, #fffd				
 			add a					
@@ -354,7 +360,8 @@ reg_left_6	add a
 pause_rep	db 0
 stack_pos	
 			dup MAX_NESTED_LEVEL		// Make sure packed file has enough nested level here
-			DB 0,0,0
+				DB 0	// counter
+				DW 0	// HL value (position)
 			edup
 stack_pos_end
 

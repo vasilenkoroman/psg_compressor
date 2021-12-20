@@ -378,7 +378,7 @@ public:
 
     int shortRefTimings(const RegMap& regs, uint16_t symbol)
     {
-        int result = m_stats.level >= 4 ? 142 : 115;
+        int result = m_stats.level >= 4 ? 239 : 115;
         result += TimingsHelper::pl0xTimings(regs, symbol);
         return result;
     }
@@ -825,12 +825,14 @@ private:
             else if (isNestedShortRef(pos))
             {
                 timingsData.push_back(shortRefTiming(pos));
+                if (stats.level >= CompressionLevel::l4)
+                    decLen();
             }
             else if (isNestedLongRefStart(pos))
             {
                 int symbolsLeftAtLevel = len - j;
                 timingsData.push_back(longRefInitTiming(pos, symbolsLeftAtLevel));
-                decLen();
+                --reducedLen;
                 if (reducedLen == 0)
                 {
                     reducedLen = refInfo[pos].reducedLen;
@@ -1026,7 +1028,13 @@ private:
                     const auto& ref = refInfo[i + j];
                     if (ref.refLen == 0  || (ref.refLen > 1 && ref.offsetInRef == 0))
                     {
-                        ++reducedLen; //< Don't count 1-symbol refs during ref serialization
+                        ++reducedLen;
+                    }
+                    else if (ref.refLen == 1)
+                    {
+                        // Don't count 1-symbol refs during ref serialization for Levels [0..3]
+                        if (stats.level >= l4)
+                            ++reducedLen;
                     }
 
                     serializedSize += serializedFrameSize(pos + j);
@@ -1044,12 +1052,14 @@ private:
                 if (truncateLastRef2)
                     --reducedLen;
 
-                while (chainLen > 0 && refInfo[i + chainLen - 1].refLen == 1)
+                if (stats.level < l4)
                 {
-                    sizes.pop_back();
-                    --chainLen;
+                    while (chainLen > 0 && refInfo[i + chainLen - 1].refLen == 1)
+                    {
+                        sizes.pop_back();
+                        --chainLen;
+                    }
                 }
-
 
                 int benifit = *sizes.rbegin() - (chainLen == 1 ? 2 : 3);
                 if (benifit > bestBenifit)
