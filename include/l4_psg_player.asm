@@ -3,7 +3,7 @@ Player for Fast PSG Packer for compression levels [4..5]
 Source for sjasm cross-assembler.
 Source code is based on psndcj/tbk player and bfox/introspec player.
 Modified by physic 8.12.2021.
-Max time is 948t for compression level 4 (recomended), 1016t for compression level 5
+Max time is 964t for compression level 4 (recomended), 1016t for compression level 5
 Player size is increased from 348 to 485 bytes.
 
 11hhhhhh llllllll nnnnnnnn	3	CALL_N - вызов с возвратом для проигрывания (nnnnnnnn + 1) значений по адресу 11hhhhhh llllllll
@@ -118,7 +118,7 @@ pl11
 			ld  hl, (pl_track+1)
 			dec	 l
 			dec (hl)
-			jr	 z, same_level_ref		; 4+16+4+11+7+6+7=55
+			jr	 z, same_level_ref		; 7+6+4+16+4+11+7=55
 nested_ref
 			// Save pos for the current nested level
 			inc	 l
@@ -134,14 +134,13 @@ same_level_ref
 
 			ex	de,hl					
 			add hl, bc	
-
 			ld a, (hl)
 			add a		            	; 4+11+7+4=26
 			call pl0x					; 17
 			// Save pos for the new nested level
 			SAVE_POS 					; 38
-			ret							; 17+38+10=65
-			// total: 34+36+55+26+27+26+17+38=259t + pl0x time (661)=920t
+			ret							 
+			// total: 34+36+55+26+27+26+17+38+10=269t + pl0x time (661)=930t
 
 single_pause
 			pop	 de

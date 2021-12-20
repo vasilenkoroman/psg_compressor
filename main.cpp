@@ -382,7 +382,7 @@ public:
 
     int longRefInitTiming(int pos, const RegMap& regs, uint16_t symbol, int symbolsLeftAtLevel)
     {
-        int result = m_stats.level >= 4 ? 259 : 170;
+        int result = m_stats.level >= 4 ? 269 : 170;
 
         if (m_stats.level >= 4 && symbolsLeftAtLevel > 0)
         {
