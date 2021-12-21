@@ -68,6 +68,7 @@ mus_init	ld hl, music
 			ret							; 10+4+13+4+13+10+11+16+10+13+4+10+7+6=302
 			// total for looping: 171+131=244
 
+pause_rep	db 0
 trb_pause	ld hl, pause_rep
 			dec	 (hl)
 			ret nz						; 10+11+5=26t
@@ -217,6 +218,7 @@ mus_high	adc	 0
 
 pl10
 			SAVE_POS 						; 38
+
 			ex	de,hl
 			set 6, b
 			add hl, bc
@@ -358,12 +360,11 @@ reg_left_6	add a
 			// total: 318 + 330 = 648 (all_0_5 + mask_6_13)
 			// total: 325 + 330 = 655 (mask_0_5 + mask_6_13)
 
-pause_rep	db 0
 stack_pos	
 			dup MAX_NESTED_LEVEL		// Make sure packed file has enough nested level here
 				DB 0	// counter
 				DW 0	// HL value (position)
 			edup
 stack_pos_end
-
+			ASSERT high(stack_pos) == high(stack_pos_end), Please move player code in memory for several bytes.
 			DISPLAY	"player code occupies ", /D, $-stop, " bytes"

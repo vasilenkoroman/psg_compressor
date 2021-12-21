@@ -684,12 +684,28 @@ private:
                 updatedPsgData.push_back(0xff);
         }
 
+        if (delay < 1)
+            return;
+
+
+        if (!ayFrames.empty() && ayFrames.rbegin()->symbol <= kMaxDelay)
+        {
+            // Cleanup regs could wipe out regs chaning at all. That way it could be possible two delay records in a row. Merge them.
+            delay += lastDelayValue;
+            for (int i = 0; i < lastDelayBytes; ++i)
+                ayFrames.pop_back();
+        }
+
+        int prevSize = ayFrames.size();
+        lastDelayValue = delay;
         while (delay > 0)
         {
             uint16_t d = std::min(kMaxDelay, delay);
             ayFrames.push_back({ d }); //< Special code for delay
             delay -= d;
         }
+        lastDelayBytes = ayFrames.size() - prevSize;
+
     }
 
     void serializeDelayTimings(int count, int trbRep)
@@ -1307,6 +1323,10 @@ public:
         return result;
     }       
 
+    private:
+        int lastDelayValue = 0;
+        int lastDelayBytes = 0;
+
 };
 
 bool hasShortOpt(const std::string& s, char option)
@@ -1367,17 +1387,18 @@ int main(int argc, char** argv)
     {
         std::cout << "Usage: psg_pack [OPTION] input_file output_file" << std::endl;
         std::cout << "Example: psg_pack --level 1 file1.psg packetd.mus" << std::endl;
+        std::cout << "Recomended compression levels are level 1 (fast play, up to 799t) and level 4 (small size, up to 930t)" << std::endl;
         std::cout << "Default options: --fast --clean" << std::endl;
         std::cout << "" << std::endl;
         std::cout << "Options:" << std::endl;
         std::cout << "-l, --level\t Compression level:" << std::endl;
 
         std::cout << "\t  0\tMaximum speed. Max frame time=799t" << std::endl;
-        std::cout << "\t* 1\tSame max frame time, avarage frame size worse a little bit, better compression (default)" << std::endl;
+        std::cout << "\t* 1\tSame max frame time 799t, avarage frame size worse a little bit, better compression (default)" << std::endl;
         std::cout << "\t  2\tMax frame time about 827t, better compression" << std::endl;
         std::cout << "\t  3\tMax frame time above 900t, better compression" << std::endl;
-        std::cout << "\t* 4\tMax frame time up to 948t, signitifally better compression. Requires 'l4_psg_player.asm'" << std::endl;
-        std::cout << "\t  5\tMax frame time up to 1016t, a bit better compression. Requires 'l4_psg_player.asm'" << std::endl;
+        std::cout << "\t* 4\tMax frame time up to 930t, signitifally better compression. Requires 'l4_psg_player.asm'" << std::endl;
+        std::cout << "\t  5\tMax frame time up to 1032t, a bit better compression. Requires 'l4_psg_player.asm'" << std::endl;
 
         std::cout << "-c, --clean\t Clean AY registers before packing. Improve compression level but incompatible with some tracks." << std::endl;
         std::cout << "-k, --keep\t --Don't clean AY regiaters." << std::endl;
