@@ -1,7 +1,7 @@
 /*
 Player for Fast PSG Packer for compression levels [0..3]
 Source for sjasm cross-assembler.
-Source code is based on psndcj/tbk player and bfox/introspec player.
+Source code is based on psndcj/tbk player and bfox/tmk player.
 Modified by physic 8.12.2021.
 Max time is reduced from 1089t to 799t (-290t) for compression level 1.
 Player size is increased from 348 to 485 bytes.

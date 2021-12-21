@@ -1,7 +1,7 @@
 /*
 Player for Fast PSG Packer for compression levels [4..5]
 Source for sjasm cross-assembler.
-Source code is based on psndcj/tbk player and bfox/introspec player.
+Source code is based on psndcj/tbk player and bfox/tmk player.
 Modified by physic 8.12.2021.
 Max time is 964t for compression level 4 (recomended), 1016t for compression level 5
 Player size is increased from 348 to 543 bytes.
@@ -26,15 +26,13 @@ MAX_NESTED_LEVEL EQU 4
 
 LD_HL_CODE	EQU 0x2A
 JR_CODE		EQU 0x18
-LD_A_CODE	EQU 0x3e
-
 
 			MACRO SAVE_POS
 				ex	de,hl
 				ld	hl, (pl_track+1)
 				ld	(hl),e
 				inc	l
-				ld	(hl),d						; 4+16+7+4+7=38/40t
+				ld	(hl),d						; 4+16+7+4+7=38t
 			ENDM
 							
 init		EQU mus_init
@@ -67,8 +65,8 @@ mus_init	ld hl, music
 			inc hl
 
 			ld (pl_track+1), hl
-			ret							; 10+16+4+13+7+13+10=73
-			// total for looping: 171+73=244
+			ret							; 10+4+13+4+13+10+11+16+10+13+4+10+7+6=302
+			// total for looping: 171+131=244
 
 trb_pause	ld hl, pause_rep
 			dec	 (hl)
@@ -112,7 +110,7 @@ pl1x		// Process ref
 			inc hl
 			ld c, (hl)
 			inc hl
-			jp p, pl10					; 7+6+7+6+10=36t
+			jp p, pl10						; 7+6+7+6+10=36t
 
 pl11		
 			ld a, (hl)			
@@ -121,27 +119,27 @@ pl11
 			ld  hl, (pl_track+1)
 			dec	 l
 			dec (hl)
-			jr	 z, same_level_ref		; 7+6+4+16+4+11+7=55
+			jr	 z, same_level_ref			; 7+6+4+16+4+11+7=55
 nested_ref
 			// Save pos for the current nested level
 			inc	 l
 			ld	(hl),e
 			inc	l
 			ld	(hl),d
-			inc  l						; 4+7+4+7+4+=26
+			inc  l							; 4+7+4+7+4+=26
 same_level_ref
 			ld	 (hl),a
 			inc	 l
 			// update nested level
-			ld	 (pl_track+1),hl		; 7+4+16=27
+			ld	 (pl_track+1),hl			; 7+4+16=27
 
 			ex	de,hl					
 			add hl, bc	
 			ld a, (hl)
-			add a		            	; 4+11+7+4=26
-			call pl0x					; 17
+			add a		            		; 4+11+7+4=26
+			call pl0x						; 17
 			// Save pos for the new nested level
-			SAVE_POS 					; 38
+			SAVE_POS 						; 38
 			ret							 
 			// total: 34+36+55+26+27+26+17+38+10=269t + pl0x time (661)=930t
 
@@ -172,7 +170,7 @@ pause_cont
 			ld (trb_play), hl				; 7+4+7+10+16=44
 			
 			pop	 hl						
-			ret							; 50+44+10+10=114
+			ret								; 50+44+10+10=114
 
 pause_or_psg1
 			add	 a
@@ -188,7 +186,7 @@ pause_or_psg1
 			out (c),a
 			ld b, #bf
 			outi
-			ret							; 12+7+16+10=45
+			ret								; 12+7+16+10=45
 
 pl00		add	 a
 			jr	 nc, pause_or_psg1
@@ -205,7 +203,7 @@ mus_high	adc	 0
 			ld	 a,(de)
 			inc	 de
 			exx							
-			inc	 hl						; 4+7+4+7+4+4+7+6+4+6=53
+			inc	 hl							; 4+7+4+7+4+4+7+6+4+6=53
 			call reg_left_6
 
 			exx
@@ -218,29 +216,29 @@ mus_high	adc	 0
 			; total: 5+23+47+27+25 - 6-10-7-6-7-7-10 = 74 (longer that PSG2)
 
 pl10
-			SAVE_POS 					; 38
+			SAVE_POS 						; 38
 			ex	de,hl
 			set 6, b
 			add hl, bc
 
 			ld a, (hl)
-			add a		            	; 4+8+11+7+4=34
+			add a		            		; 4+8+11+7+4=34
 			
 			call pl0x
 			ld	hl, (pl_track+1)
-			jp trb_rep				; 17+16+10=43
-									; trb_rep=54
+			jp trb_rep						; 17+16+10=43
+											; trb_rep=54
 			// total:  142+43+54=239t  + pl0x time(661t) = 900t(max)
 
 
 pl0x		ld bc, #fffd				
 			add a					
-			jr nc, pl00				; 10+4+7=21t
+			jr nc, pl00						; 10+4+7=21t
 
 pl01	// player PSG2
 			inc hl
 			ld de, #00bf
-			jr z, play_all_0_5		; 21+6+10+7=44t
+			jr z, play_all_0_5				; 21+6+10+7=44t
 play_by_mask_0_5
 
 			dup 5
@@ -251,18 +249,18 @@ play_by_mask_0_5
 				outi				
 				ld b,#ff
 1				inc d
-			edup					;54*3 + 20*2=202
+			edup							; 54*3 + 20*2=202
 
 			add a
-			jr c, play_all_0_5_end	; 44+54*4+20+ 4 + 12=296 (timing at play_all_0_5_end)
+			jr c, play_all_0_5_end			; 44+54*4+20+ 4 + 12=296 (timing at play_all_0_5_end)
 			out (c),d
 			ld b,e
-			outi					; 4+7+12+4+16=43
+			outi							; 4+7+12+4+16=43
 
 second_mask	ld a, (hl)
 			inc hl					
 before_6    add a
-			jr z,play_all_6_13		; 7+6+4+7=24
+			jr z,play_all_6_13				; 7+6+4+7=24
 			// total: 44+202+43+24+5=318  (till play_all_6_13)
 			ld b,#ff
 			jp play_by_mask_13_6

@@ -143,7 +143,7 @@ bool isPsg2(const RegMap& regs, uint16_t symbol, const Stats& stats)
 
 struct RefInfo
 {
-    int refTo = 0;
+    int refTo = -1;
     int reducedLen = 0;
     int refLen = 0;
     int level = 0;
@@ -376,10 +376,12 @@ public:
         return result;
     }
 
-    int shortRefTimings(const RegMap& regs, uint16_t symbol)
+    int shortRefTimings(const RegMap& regs, uint16_t symbol, int trbRep)
     {
-        int result = m_stats.level >= 4 ? 239 : 115;
+        int result = m_stats.level >= 4 ? 185 : 115;
         result += TimingsHelper::pl0xTimings(regs, symbol);
+        if (m_stats.level >= 4)
+            result += trbRepTimings(trbRep);
         return result;
     }
 
@@ -387,13 +389,10 @@ public:
     {
         int result = m_stats.level >= 4 ? 269 : 170;
 
-        if (m_stats.level >= 4 && symbolsLeftAtLevel > 0)
+        if (m_stats.level >= 4 && symbolsLeftAtLevel == 1)
         {
-            if (m_refInfo[pos].refLen == symbolsLeftAtLevel)
-            {
-                // same level ref
-                result -= 26 - 5;
-            }
+            // same level ref
+            result -= 26 - 5;
         }
 
         result += TimingsHelper::pl0xTimings(regs, symbol);
@@ -733,7 +732,7 @@ private:
 
     void serializeRef(uint16_t pos, int len, uint8_t reducedLen)
     {
-        int refTiming = serializeRefTimings(pos, len, reducedLen);
+        int refTiming = serializeRefTimings(pos, len, reducedLen, 0);
         if (stats.level == CompressionLevel::l4)
         {
             const auto symbol = ayFrames[pos].symbol;
@@ -742,31 +741,31 @@ private:
         }
 
         int offset = frameOffsets[pos];
-        int recordSize = reducedLen == 1 ? 2 : 3;
+        int recordSize = len == 1 ? 2 : 3;
         int16_t delta = offset - compressedData.size() - recordSize;
-        if (reducedLen > 1 && stats.level < CompressionLevel::l4)
+        if (len > 1 && stats.level < CompressionLevel::l4)
                ++delta;
         assert(delta < 0);
 
         uint8_t* ptr = (uint8_t*)&delta;
 
-        if (reducedLen == 1)
+        if (len == 1)
             ptr[1] &= ~0x40; // reset 6-th bit
 
         // Serialize in network byte order
         compressedData.push_back(ptr[1]);
         compressedData.push_back(ptr[0]);
 
-        if (reducedLen > 1)
-            compressedData.push_back(reducedLen - 1);
+        if (len > 1)
+            compressedData.push_back(reducedLen);
     };
     
-    int shortRefTiming(int pos)
+    int shortRefTiming(int pos, int trbRep)
     {
         auto symbol = ayFrames[pos].symbol;
         auto regs = symbolToRegs[symbol];
 
-        return th.shortRefTimings(regs, symbol);
+        return th.shortRefTimings(regs, symbol, trbRep);
     }
 
     int longRefInitTiming(int pos, int symbolsLeftAtLevel)
@@ -784,76 +783,54 @@ private:
 
     bool isNestedLongRefStart(int pos)
     {
-        bool result = refInfo[pos].refLen > 1 && refInfo[pos].offsetInRef == 0;
+        bool result = refInfo[pos].refLen > 1 && refInfo[pos].refTo >= 0;
         return result;
     }
 
-    int serializeRefTimings(int pos, int len, int reducedLen)
+    int serializeRefTimings(int pos, int len, int reducedLen, int prevReducedLen)
     {
         if (len == 1)
         {
-            timingsData.push_back(shortRefTiming(pos)); // First frame
+            timingsData.push_back(shortRefTiming(pos, reducedLen)); // First frame
             return *timingsData.rbegin();
         }
 
-        std::vector<int> lenStack;
-
-        auto decLen = 
-            [&]()
-            {
-                --reducedLen;
-                if (reducedLen == 0 && !lenStack.empty())
-                {
-                    reducedLen = *lenStack.rbegin();
-                    lenStack.pop_back();
-                }
-            };
-
-
-        int result = longRefInitTiming(pos, 0);
+        const int endPos = pos + len;
+        
+        int result = longRefInitTiming(pos, prevReducedLen);
         timingsData.push_back(result); // First frame
-        --reducedLen;
-        for (int j = 1; j < len; ++j)
+        ++pos;
+        for (;pos < endPos; ++pos)
         {
-            ++pos;
             auto symbol = ayFrames[pos].symbol;
             if (symbol <= kMaxDelay)
             {
                 serializeDelayTimings(symbol, reducedLen);
-                decLen();
             }
             else if (isNestedShortRef(pos))
             {
-                timingsData.push_back(shortRefTiming(pos));
-                if (stats.level >= CompressionLevel::l4)
-                    decLen();
+                timingsData.push_back(shortRefTiming(pos, reducedLen));
+                if (stats.level < CompressionLevel::l4)
+                    continue; //< skip decrement reducedLen
             }
             else if (isNestedLongRefStart(pos))
             {
-                int symbolsLeftAtLevel = len - j;
-                timingsData.push_back(longRefInitTiming(pos, symbolsLeftAtLevel));
-                --reducedLen;
-                if (reducedLen == 0)
-                {
-                    reducedLen = refInfo[pos].reducedLen;
-                }
-                else 
-                {
-                    lenStack.push_back(reducedLen);
-                    reducedLen = refInfo[pos].reducedLen;
-                }
-
+                serializeRefTimings(refInfo[pos].refTo, refInfo[pos].refLen, refInfo[pos].reducedLen, reducedLen);
+                pos += refInfo[pos].refLen - 1;
             }
             else
             {
                 auto regs = symbolToRegs[symbol];
                 int result = th.frameTimings(regs, reducedLen, symbol);
                 timingsData.push_back(result);
-                decLen();
             }
+            --reducedLen;
         }
+        assert(reducedLen == 0);
+        assert(pos == endPos);
         return result;
     }
+
 
     void serializeFrame(uint16_t pos)
     {
@@ -1026,7 +1003,7 @@ private:
                         break;
                     ++chainLen;
                     const auto& ref = refInfo[i + j];
-                    if (ref.refLen == 0  || (ref.refLen > 1 && ref.offsetInRef == 0))
+                    if (ref.refLen == 0  || (ref.refLen > 1 && ref.refTo >= 0))
                     {
                         ++reducedLen;
                     }
@@ -1085,7 +1062,7 @@ private:
             }
         }
 
-        return std::tuple<int, int, int> { chainPos, maxChainLen, maxReducedLen};
+        return std::tuple<int, int, int> { chainPos, maxChainLen, maxReducedLen-1};
     }
 
 public:
@@ -1110,7 +1087,7 @@ public:
             refInfo[j].level = std::max(refInfo[j].level, level);
         for (int j = pos; j < pos + len; ++j)
         {
-            if (refInfo[j].refTo && refInfo[j].refLen > 1)
+            if (refInfo[j].refTo >= 0 && refInfo[j].refLen > 1)
                 updateNestedLevel(refInfo[j].refTo, refInfo[j].refLen, level+1);
         }
     }
@@ -1254,7 +1231,7 @@ public:
                 if (len > 0)
                 {
                     serializeRef(pos, len, reducedLen);
-                    updateRefInfo(i, pos, len, reducedLen - 1);
+                    updateRefInfo(i, pos, len, reducedLen);
 
                     i += len;
                     if (len == 1)
@@ -1315,7 +1292,7 @@ public:
         fileOut << "frame; timings; with call" << std::endl;
         for (int i = 0; i < timingsData.size(); ++i)
         {
-            fileOut << i << ";" << timingsData[i] << ";" << timingsData[i]+17 << std::endl;
+            fileOut << i << ";" << timingsData[i] << ";" << timingsData[i]+10 << ";" << std::endl;
             
         }
 
