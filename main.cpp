@@ -1382,13 +1382,13 @@ int main(int argc, char** argv)
 {
     std::unique_ptr<PgsPacker> packer(new PgsPacker());
 
-    std::cout << "Fast PSG packer v.0.8b" << std::endl;
+    std::cout << "Fast PSG packer v.0.81b" << std::endl;
     if (argc < 3)
     {
         std::cout << "Usage: psg_pack [OPTION] input_file output_file" << std::endl;
         std::cout << "Example: psg_pack --level 1 file1.psg packetd.mus" << std::endl;
         std::cout << "Recomended compression levels are level 1 (fast play, up to 799t) and level 4 (small size, up to 930t)" << std::endl;
-        std::cout << "Default options: --fast --clean" << std::endl;
+        std::cout << "Default options: --level 1 --clean" << std::endl;
         std::cout << "" << std::endl;
         std::cout << "Options:" << std::endl;
         std::cout << "-l, --level\t Compression level:" << std::endl;
