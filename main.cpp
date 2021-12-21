@@ -13,7 +13,7 @@ static const int kMaxDelay = 256;
 static const int kMaxRefOffset = 16384;
 static const int kPsg2iSize = 32;
 
-static const int kMaxTimeForL4 = 964;
+static const int kMaxTimeForL4 = 930;
 
 enum Flags
 {
@@ -1394,18 +1394,23 @@ int main(int argc, char** argv)
 
     std::cout << "Starting compression at level " << packer->stats.level << std::endl;
     auto timeBegin = std::chrono::steady_clock::now();
+    auto prevSymbolsToInflate = packer->symbolsToInflate;
     result = packer->parsePsg(argv[argc-2]);
     if (result == 0)
         result = packer->packPsg(argv[argc - 1]);
     if (result != 0)
         return result;
-    if (!packer->symbolsToInflate.empty())
+
+    while (packer->symbolsToInflate.size() != prevSymbolsToInflate.size())
     {
+        prevSymbolsToInflate = packer->symbolsToInflate;
+        for (auto& s : prevSymbolsToInflate)
+            s.second = 0;
+
         // Timings are fail. Pack again.
-        auto backup = packer->symbolsToInflate;
         packer.reset(new PgsPacker());
         parseArgs(argc, argv, packer.get());
-        packer->symbolsToInflate = backup;
+        packer->symbolsToInflate = prevSymbolsToInflate;
 
         result = packer->parsePsg(argv[argc - 2]);
         if (result == 0)
