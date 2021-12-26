@@ -252,7 +252,7 @@ public:
     {
         int result = 341;
         if (regs.count(13) == 0)
-            result -= 40;
+            result -= 35;
         return result;
     }
 
