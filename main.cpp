@@ -439,7 +439,8 @@ public:
     int flags = kDefaultFlags;
     bool firstFrame = false;
     std::vector<int> timingsData;
-
+    int trimStart = -1;
+    int trimEnd = -1;
 private:
 
     uint16_t toSymbol(const RegMap& regs)
@@ -1141,7 +1142,8 @@ public:
 
         int delayCounter = 0;
 
-        while (pos < end)
+        while (pos < end 
+            && (trimEnd == -1 || stats.psgFrames < trimEnd))
         {
             uint8_t value = *pos;
             if (value >= 0xfe)
@@ -1160,8 +1162,11 @@ public:
                 }
                 else
                 {
-                    delayCounter += pos[1] * 4;
-                    stats.psgFrames += delayCounter;
+                    int v = pos[1] * 4;
+                    if (trimEnd != -1)
+                        v = std::min(trimEnd - stats.psgFrames, v);
+                    delayCounter += v;
+                    stats.psgFrames += v;
                     pos += 2;
                 }
             }
@@ -1347,7 +1352,7 @@ int parseArgs(int argc, char** argv, PgsPacker* packer)
         {
             if (i == argc - 1)
             {
-                std::cerr << "It need to define compression leven in range [0..4] after argument '--level'" << std::endl;
+                std::cerr << "It need to define compression leven in range [0..4] after the argument '--level'" << std::endl;
                 return -1;
             }
             int value = atoi(argv[i + 1]);
@@ -1357,6 +1362,16 @@ int parseArgs(int argc, char** argv, PgsPacker* packer)
                 return -1;
             }
             packer->stats.level = (CompressionLevel)value;
+        }
+        if (hasShortOpt(s, 't') || s == "--trim")
+        {
+            if (i == argc - 1)
+            {
+                std::cerr << "It need to define trim value after the argument '--trim'" << std::endl;
+                return -1;
+            }
+            int value = atoi(argv[i + 1]);
+            packer->trimEnd = (CompressionLevel)value;
         }
         if (hasShortOpt(s, 'c') || s == "--clean")
         {
@@ -1404,9 +1419,10 @@ int main(int argc, char** argv)
         std::cout << "-k, --keep\t --Don't clean AY regiaters." << std::endl;
         std::cout << "-i, --info\t Print timings info for each compresed frame." << std::endl;
         std::cout << "-d, --dump\t Dump uncompressed PSG frame to the separate file." << std::endl;
+        std::cout << "-t, --trim\t Cut source track. Include frames [0..trim)" << std::endl;
         return -1;
     }
-
+    
     int result = parseArgs(argc, argv, packer.get());
     if (result != 0)
         return result;
