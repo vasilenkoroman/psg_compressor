@@ -106,7 +106,9 @@ uint16_t longRegMask(const RegMap& regs)
 
 struct Stats
 {
-    int psgFrames = 0;
+    int outPsgFrames = 0;
+    int inPsgFrames = 0;
+
     int emptyCnt = 0;
     int emptyFrames = 0;
 
@@ -400,11 +402,19 @@ public:
     }
 };
 
+struct CutRange
+{
+    int from = -1;
+    int to = -1;
+
+    bool isEmpty() const { return from == -1 && to == -1; }
+};
+
 class PgsPacker
 {
 public:
 
-    PgsPacker(): th(stats, refInfo) {}
+    PgsPacker() : th(stats, refInfo) {}
 
     struct FrameInfo
     {
@@ -439,8 +449,8 @@ public:
     int flags = kDefaultFlags;
     bool firstFrame = false;
     std::vector<int> timingsData;
-    int trimStart = -1;
-    int trimEnd = -1;
+
+    std::vector<CutRange> cutRanges;
 private:
 
     uint16_t toSymbol(const RegMap& regs)
@@ -485,7 +495,7 @@ private:
         // Clean tone period.
 
         /* toneA */
-        if (flags & cleanToneA) 
+        if (flags & cleanToneA)
         {
             if (lastOrigRegs[8] == 0 || (lastOrigRegs[7] & 1) != 0)
             {
@@ -493,7 +503,7 @@ private:
                 lastCleanedRegs[1] = prevTonePeriod[1];
                 stats.unusedToneA++;
             }
-            else 
+            else
             {
                 prevTonePeriod[0] = lastOrigRegs[0];
                 prevTonePeriod[1] = lastOrigRegs[1];
@@ -508,7 +518,7 @@ private:
                 lastCleanedRegs[3] = prevTonePeriod[3];
                 stats.unusedToneB++;
             }
-            else 
+            else
             {
                 prevTonePeriod[2] = lastOrigRegs[2];
                 prevTonePeriod[3] = lastOrigRegs[3];
@@ -523,7 +533,7 @@ private:
                 lastCleanedRegs[5] = prevTonePeriod[5];
                 stats.unusedToneC++;
             }
-            else 
+            else
             {
                 prevTonePeriod[4] = lastOrigRegs[4];
                 prevTonePeriod[5] = lastOrigRegs[5];
@@ -540,7 +550,7 @@ private:
                 lastCleanedRegs[12] = prevEnvelopePeriod[12];
                 stats.unusedEnvelope++;
             }
-            else 
+            else
             {
                 prevEnvelopePeriod[11] = lastOrigRegs[11];
                 prevEnvelopePeriod[12] = lastOrigRegs[12];
@@ -549,14 +559,14 @@ private:
 
         /* clean envelope form */
 
-        if (flags & cleanEnvForm) 
+        if (flags & cleanEnvForm)
         {
             if ((lastOrigRegs[8] & 16) == 0 && (lastOrigRegs[9] & 16) == 0 && (lastOrigRegs[10] & 16) == 0)
             {
                 lastCleanedRegs[13] = prevEnvelopeForm[13];
                 stats.unusedEnvForm++;
             }
-            else 
+            else
             {
                 prevEnvelopeForm[13] = lastOrigRegs[13];
             }
@@ -564,14 +574,14 @@ private:
 
         /* clean noise period */
 
-        if (flags & cleanNoise) 
+        if (flags & cleanNoise)
         {
             if ((lastOrigRegs[7] & 8) != 0 && (lastOrigRegs[7] & 16) != 0 && (lastOrigRegs[7] & 32) != 0)
             {
                 lastCleanedRegs[6] = prevNoisePeriod[6];
                 stats.unusedNoise++;
             }
-            else 
+            else
             {
                 prevNoisePeriod[6] = lastCleanedRegs[6];
             }
@@ -652,7 +662,7 @@ private:
                 updatedPsgData.insert(updatedPsgData.end(), srcPsgData.begin(), srcPsgData.begin() + 16);
 
             updatedPsgData.push_back(0xff);
-            for (const auto& reg: changedRegs)
+            for (const auto& reg : changedRegs)
             {
                 updatedPsgData.push_back(reg.first);
                 updatedPsgData.push_back(reg.second);
@@ -673,6 +683,8 @@ private:
             ++stats.maskToUsage[mask];
         }
 
+        ++stats.outPsgFrames;
+
         changedRegs.clear();
         return true;
     }
@@ -688,6 +700,7 @@ private:
         if (delay < 1)
             return;
 
+        ++stats.outPsgFrames;
 
         if (!ayFrames.empty() && ayFrames.rbegin()->symbol <= kMaxDelay)
         {
@@ -761,7 +774,7 @@ private:
         int recordSize = len == 1 ? 2 : 3;
         int16_t delta = offset - compressedData.size() - recordSize;
         if (len > 1 && stats.level < CompressionLevel::l4)
-               ++delta;
+            ++delta;
         assert(delta < 0);
 
         uint8_t* ptr = (uint8_t*)&delta;
@@ -776,7 +789,7 @@ private:
         if (len > 1)
             compressedData.push_back(reducedLen);
     };
-    
+
     int shortRefTiming(int pos, int trbRep)
     {
         auto symbol = ayFrames[pos].symbol;
@@ -813,11 +826,11 @@ private:
         }
 
         const int endPos = pos + len;
-        
+
         int result = longRefInitTiming(pos, prevReducedLen);
         timingsData.push_back(result); // First frame
         ++pos;
-        for (;pos < endPos; ++pos)
+        for (; pos < endPos; ++pos)
         {
             auto symbol = ayFrames[pos].symbol;
             if (symbol <= kMaxDelay)
@@ -900,7 +913,7 @@ private:
             }
             ++stats.firstHalfRegs[firstsHalfRegs];
             ++stats.secondHalfRegs[regs.size() - firstsHalfRegs];
-            
+
             uint8_t header2 = makeRegMask(regs, 6, 14);
             header2 = reverseBits(header2);
             if (itr == stats.maskIndex.end())
@@ -971,16 +984,16 @@ private:
 
         if (slave.symbol <= kMaxDelay || master.delta.size() < slave.delta.size())
             return false;
-        
+
         auto itr = master.delta.begin();
-        for (const auto& reg: slave.delta)
+        for (const auto& reg : slave.delta)
         {
             while (itr != master.delta.end() && itr->first < reg.first)
                 ++itr;
             if (itr == master.delta.end() || itr->first != reg.first || itr->second != reg.second)
                 return false;
         }
-        for (const auto& reg: master.delta)
+        for (const auto& reg : master.delta)
         {
             if (slave.fullState[reg.first] != reg.second)
                 return false;
@@ -999,7 +1012,7 @@ private:
         int chainPos = -1;
         int bestBenifit = 0;
         int maxReducedLen = -1;
-        
+
         int maxAllowedReducedLen = stats.level < l4 ? 128 : 255;
 
         for (int i = 0; i < pos; ++i)
@@ -1013,14 +1026,14 @@ private:
                 int reducedLen = 0;
                 int serializedSize = 0;
                 std::vector<int> sizes;
-                
+
                 for (int j = 0; j < maxLength && i + j < pos && reducedLen < maxAllowedReducedLen; ++j)
                 {
                     if ((refInfo[i + j].refLen > 1 && stats.level < l4) || !isFrameCover(ayFrames[i + j], ayFrames[pos + j]))
                         break;
                     ++chainLen;
                     const auto& ref = refInfo[i + j];
-                    if (ref.refLen == 0  || (ref.refLen > 1 && ref.refTo >= 0))
+                    if (ref.refLen == 0 || (ref.refLen > 1 && ref.refTo >= 0))
                     {
                         ++reducedLen;
                     }
@@ -1037,7 +1050,7 @@ private:
 
                 bool truncateLastRef2 = false;
                 while (chainLen > 0 && refInfo[i + chainLen - 1].refLen > 1
-                    && refInfo[i + chainLen - 1].offsetInRef < refInfo[i + chainLen - 1].refLen-1)
+                    && refInfo[i + chainLen - 1].offsetInRef < refInfo[i + chainLen - 1].refLen - 1)
                 {
                     sizes.pop_back();
                     --chainLen;
@@ -1079,7 +1092,7 @@ private:
             }
         }
 
-        return std::tuple<int, int, int> { chainPos, maxChainLen, maxReducedLen-1};
+        return std::tuple<int, int, int> { chainPos, maxChainLen, maxReducedLen - 1};
     }
 
 public:
@@ -1105,8 +1118,24 @@ public:
         for (int j = pos; j < pos + len; ++j)
         {
             if (refInfo[j].refTo >= 0 && refInfo[j].refLen > 1)
-                updateNestedLevel(refInfo[j].refTo, refInfo[j].refLen, level+1);
+                updateNestedLevel(refInfo[j].refTo, refInfo[j].refLen, level + 1);
         }
+    }
+
+    int cutDelay(const CutRange& range, int v)
+    {
+        if (!range.isEmpty())
+        {
+            v = std::min(range.to - stats.inPsgFrames, v);
+            if (stats.inPsgFrames < range.from)
+            {
+                if (stats.inPsgFrames + v >= range.from)
+                    v = std::min(range.from - stats.inPsgFrames, v);
+                else
+                    v = 0;
+            }
+        }
+        return v;
     }
 
     int parsePsg(const std::string& inputFileName)
@@ -1142,31 +1171,56 @@ public:
 
         int delayCounter = 0;
 
-        while (pos < end 
-            && (trimEnd == -1 || stats.psgFrames < trimEnd))
+
+        CutRange range;
+        if (!cutRanges.empty())
         {
+            range = cutRanges[0];
+            cutRanges.erase(cutRanges.begin());
+        }
+
+        while (pos < end)
+        {
+            if (!range.isEmpty() && stats.inPsgFrames >= range.to)
+            {
+                if (!cutRanges.empty())
+                {
+                    range = cutRanges[0];
+                    cutRanges.erase(cutRanges.begin());
+                    continue;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
             uint8_t value = *pos;
             if (value >= 0xfe)
             {
+                bool needSkip = !range.isEmpty() && stats.inPsgFrames < range.from;
                 if (!changedRegs.empty())
                 {
-                    if (!writeRegs())
-                        ++delayCounter; //< Regs were cleaned up.
+                    if (!needSkip)
+                    {
+                        if (!writeRegs())
+                            ++delayCounter; //< Regs were cleaned up.
+                    }
                 }
 
                 if (value == 0xff)
                 {
-                    ++stats.psgFrames;
-                    ++delayCounter;
+                    if (!needSkip)
+                        ++delayCounter;
+                    ++stats.inPsgFrames;
                     ++pos;
                 }
                 else
                 {
                     int v = pos[1] * 4;
-                    if (trimEnd != -1)
-                        v = std::min(trimEnd - stats.psgFrames, v);
+                    v = cutDelay(range, v);
+                    stats.inPsgFrames += pos[1] * 4;
                     delayCounter += v;
-                    stats.psgFrames += v;
                     pos += 2;
                 }
             }
@@ -1192,6 +1246,7 @@ public:
             if (!writeRegs())
                 ++delayCounter; //< Regs were cleaned up.
         }
+        delayCounter = cutDelay(range, delayCounter);
         writeDelay(delayCounter);
 
         for (const auto& v: stats.maskToUsage)
@@ -1343,6 +1398,24 @@ bool hasShortOpt(const std::string& s, char option)
     return s.find(option) != std::string::npos;
 }
 
+CutRange parseRange(const std::string& value)
+{
+    CutRange result;
+    int pos = value.find(',');
+    if (pos == -1)
+    {
+        result.to = std::stoi(value);
+    }
+    else
+    {
+        auto s1 = value.substr(0, pos);
+        auto s2 = value.substr(pos+1);
+        result.from = std::stoi(s1);
+        result.to = std::stoi(s2);
+    }
+    return result;
+}
+
 int parseArgs(int argc, char** argv, PgsPacker* packer)
 {
     for (int i = 1; i < argc - 2; ++i)
@@ -1363,15 +1436,15 @@ int parseArgs(int argc, char** argv, PgsPacker* packer)
             }
             packer->stats.level = (CompressionLevel)value;
         }
-        if (hasShortOpt(s, 't') || s == "--trim")
+        if (s == "--cut")
         {
             if (i == argc - 1)
             {
-                std::cerr << "It need to define trim value after the argument '--trim'" << std::endl;
+                std::cerr << "It need to define cut value in frames after the argument '--cut'. Example: 0,1000." << std::endl;
                 return -1;
             }
-            int value = atoi(argv[i + 1]);
-            packer->trimEnd = (CompressionLevel)value;
+            auto range = parseRange(argv[i + 1]);
+            packer->cutRanges.push_back(range);
         }
         if (hasShortOpt(s, 'c') || s == "--clean")
         {
@@ -1397,7 +1470,7 @@ int main(int argc, char** argv)
 {
     std::unique_ptr<PgsPacker> packer(new PgsPacker());
 
-    std::cout << "Fast PSG packer v.0.81b" << std::endl;
+    std::cout << "Fast PSG packer v.0.9b" << std::endl;
     if (argc < 3)
     {
         std::cout << "Usage: psg_pack [OPTION] input_file output_file" << std::endl;
@@ -1419,7 +1492,7 @@ int main(int argc, char** argv)
         std::cout << "-k, --keep\t --Don't clean AY regiaters." << std::endl;
         std::cout << "-i, --info\t Print timings info for each compresed frame." << std::endl;
         std::cout << "-d, --dump\t Dump uncompressed PSG frame to the separate file." << std::endl;
-        std::cout << "-t, --trim\t Cut source track. Include frames [0..trim)" << std::endl;
+        std::cout << "--cut <range>\t Cut source track. Include frames [N1..N2). Example: --cut 0,1000. The option '--cut <range>' can be repeated several times." << std::endl;
         return -1;
     }
     
@@ -1472,7 +1545,7 @@ int main(int argc, char** argv)
     std::cout << "Packed frames:\t" << packer->ayFrames.size() << std::endl;
     std::cout << "Empty frames:\t" << packer->stats.emptyCnt << std::endl;
     std::cout << "Frames in refs:\t" << packer->stats.allRepeatFrames << std::endl;
-    std::cout << "Total frames:\t" << packer->stats.psgFrames << std::endl;
+    std::cout << "Total frames:\t" << packer->stats.outPsgFrames << std::endl;
     if (packer->stats.level >= 4)
         std::cout << "Nested level:\t" << packer->maxNestedLevel() << std::endl;
     
