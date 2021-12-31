@@ -839,7 +839,7 @@ private:
             }
             else if (isNestedShortRef(pos))
             {
-                timingsData.push_back(shortRefTiming(pos, reducedLen));
+                timingsData.push_back(shortRefTiming(refInfo[pos].refTo, reducedLen));
                 if (stats.level < CompressionLevel::l4)
                     continue; //< skip decrement reducedLen
             }
