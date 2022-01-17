@@ -5,7 +5,7 @@
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>-di --level 1 c:\zx\tbk-psg\machined.psg   c:/zx/packed.mus</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>psg_pack.exe -di --scf --level 1 --cut 768,3840 c:\zx\scroll\zx_scroller\resources\mmcn.psg   c:\zx\scroll\zx_scroller\resources\main.mus</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
 </Project>

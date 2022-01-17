@@ -28,7 +28,8 @@ enum Flags
     cleanNoise = 128,
     
     dumpPsg = 256,
-    dumpTimings = 512
+    dumpTimings = 512,
+    addScf = 1024
 };
 
 enum class TimingState
@@ -131,6 +132,7 @@ struct Stats
     int unusedEnvelope = 0;
     int unusedEnvForm = 0;
     int unusedNoise = 0;
+    bool addScf = false;
 
     std::map<int, int> maskToUsage;
     std::multimap<int, int> usageToMask;
@@ -258,7 +260,7 @@ public:
         return result;
     }
 
-    static int play_by_mask_13_6(const RegMap& regs)
+    int play_by_mask_13_6(const RegMap& regs)
     {
         int result = 53;
         if (regs.count(13) == 0)
@@ -271,14 +273,20 @@ public:
         }
 
         if (regs.count(6) == 0)
+        {
             result += 4 + 11;
+            if (m_stats.addScf)
+                result -= 4; //< Early 'ret c' here. There is no 'scf' overhead.
+        }
         else
+        {
             result += 55;
+        }
 
         return result;
     }
 
-    static int reg_left_6(const RegMap& regs)
+    int reg_left_6(const RegMap& regs)
     {
         int result = 0;
 
@@ -296,14 +304,20 @@ public:
         }
 
         if (regs.count(0) == 0)
+        {
             result += 4 + 11;
+        }
         else
+        {
+            if (m_stats.addScf)
+                result += 4; //< Extra 'scf' here.
             result += 55;
+        }
 
         return result;
     }
 
-    static int play_all_0_5_end(const RegMap& regs)
+    int play_all_0_5_end(const RegMap& regs)
     {
         const auto [firstRegs, secondRegs] = splitRegs(regs);
         int secondRegsExcept13 = secondRegs;
@@ -1355,6 +1369,12 @@ public:
 
     int writeTimingsFile(const std::string& outputFileName)
     {
+        if (flags & addScf)
+        {
+            for (auto& t: timingsData)
+                t += 4;
+        }
+
         using namespace std;
 
         ofstream fileOut;
@@ -1461,6 +1481,12 @@ int parseArgs(int argc, char** argv, PgsPacker* packer)
         if (hasShortOpt(s, 'i') || s == "--info")
         {
             packer->flags |= dumpTimings;
+        }
+        if (s == "--scf")
+        {
+            // Undocumented option. Ensure 'c' flag is always on after the player. This option affects timings calculating only. It reffers to the internal player version from zx_scrool
+            packer->flags |= addScf;
+            packer->stats.addScf = true;
         }
     }
     return 0;
